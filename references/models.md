@@ -1,6 +1,6 @@
 # API model profiles
 
-Standalone reads this structure only from its own `auth.json`. Plugin configuration is separate. Existing flat and v1 configurations remain readable; v2 adds metadata and per-model defaults without silently changing existing files.
+V2 configuration in `auth.json` supports provider/model profiles and per-model defaults. Flat and v1 configurations are also supported.
 
 ```json
 {

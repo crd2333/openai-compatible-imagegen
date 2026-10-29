@@ -239,7 +239,7 @@ class PluginSkeletonTests(unittest.TestCase):
 
         self.assertIn(f"name: {PLUGIN_ID}\n", standalone_text)
         self.assertIn(f"name: {PLUGIN_ID}\n", plugin_text)
-        self.assertIn("# OpenAI-Compatible Images Skill", standalone_text)
+        self.assertIn("# OpenAI-Compatible Images\n", standalone_text)
         self.assertIn('display_name: "OpenAI-Compatible Images Skill"', standalone_agent)
         self.assertIn("scripts/imagegen.py", standalone_text)
         self.assertNotIn("batch_images", standalone_text)

@@ -2,11 +2,9 @@
 
 Post-processing converts returned PNG files into additional delivery files. It covers deterministic transparency processing, inspection, resizing, fit behavior, safe margins, grid splitting, QA, and preview boards. In generation, edit, and batch workflows, every published API original remains recorded in `original_files` and `files`, whether a derivative succeeds or fails.
 
-The Standalone CLI and Codex Plugin use the same post-processing implementation. Standalone reports `delivery_ready`; the Plugin reports `deliveryReady` and stores successful derivatives with their source relationship. A transparency alpha mask is an input to transparent delivery, while Codex canvas edit/protect regions express model editing intent; they are not interchangeable.
-
 Read [qa.md](qa.md) when the request includes quality checks. Read [prompting.md](prompting.md) when the request needs structured prompt construction or controlled batch variation.
 
-The CLI examples below are for Standalone. Set `SkillDir` as shown in [Local Auth](../SKILL.md#local-auth). Plugin agents use their bundled MCP workflow.
+Set `SkillDir` as shown in [setup](setup.md#running-commands).
 
 ## Natural-Language Requests
 
@@ -37,6 +35,8 @@ The default derived-output directory is next to the source file and ends with `-
 ## Transparency Processing
 
 Use `--transparent` for a transparent delivery request. The flag forces PNG. Only the resolved `native-alpha` route sends API `background=transparent`; local routes omit that parameter.
+
+Use `--postprocess` when local transparency processing is requested and `--no-postprocess` when it is prohibited. Omitting both inherits `postprocess.enabled`. Explicit resizing and grid transforms remain independent of this switch. Keep the base prompt semantic; the runtime adds the selected route contract as described in [prompting](prompting.md#transparency-prompts).
 
 An explicit route wins when permitted by configuration and the processing switch. A configured `native-alpha` default is selected even when local processing is disabled; its parameter retry also preserves that processing choice. For non-native defaults, local processing uses `transparency.default_route`; when local processing is disabled, an exact prompt-only allow rule may select `prompt-alpha`. Otherwise, requests at any size still reach the API with the user's prompt unchanged and receive source-alpha inspection. See [native transparency, retry policy, and processing controls](parameters.md#visual-deliverables-and-transparency).
 
@@ -108,7 +108,9 @@ For `chroma-matting`, also pass `--key "#00FF00"`. For `mask-alpha`, pass `--tra
 
 ## LLM-Assisted Adjustment
 
-When `transparency.llm_assisted.enabled=true`, the Standalone agent can inspect the original image and route checks, then run bounded additional `apply-transparency` attempts. `max_attempts` includes the first local run. Parameter tuning and route changes obey their individual switches and the route input contracts. Each attempt must pass the unchanged deterministic checks and be reviewed on contrasting preview backgrounds; tuning a processing tolerance never relaxes the quality gate. An additional Standalone API call requires `allow_api_retry=true`; the Plugin permits only local redelivery through this policy. The configured native-parameter retry is separate.
+When `transparency.llm_assisted.enabled=true`, inspect the original image and route checks, then run bounded additional `apply-transparency` attempts. `max_attempts` includes the first local run. Parameter tuning and route changes obey their individual switches and the route input contracts. Each attempt must pass the unchanged deterministic checks and be reviewed on contrasting preview backgrounds; tuning a processing tolerance never relaxes the quality gate. An additional image API call requires `allow_api_retry=true`; keep the configured model, endpoint, and requested size. The configured native-parameter retry is separate.
+
+Use only the bundled processing commands; do not write image-processing code, install runtimes, download weights, or start local models. Never invent a mask or source matte color.
 
 If every permitted attempt remains unmet, the original API image and warnings remain the result.
 

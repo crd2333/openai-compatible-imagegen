@@ -1,6 +1,6 @@
 # Prompting Guide
 
-Use this shared guide with either the Standalone Skill or Codex Plugin when a request needs prompt construction or a batch with controlled variation. Include only details that support the user's intended result.
+Use this guide for prompt construction or controlled batch variation. Include only details that support the user's intended result.
 
 ## Request Structure
 
@@ -45,7 +45,7 @@ Prompt-only wording increases the chance of alpha output; it does not guarantee 
 
 An exact prompt-only rule is not required for `native-alpha`. For other routes, do not downgrade a 2K or 4K request to 1K or change models to match a rule. Use the configured local route when processing is allowed; otherwise keep the prompt unchanged and inspect the original's alpha. A prompt-only rule must match the exact pixel size, mode, and model. Failed transparency checks preserve the API original.
 
-When `transparency.llm_assisted.enabled=true`, prompt changes remain bounded by the policy. The Standalone adapter may send an additional image API request only when `allow_api_retry=true`, keeping the configured model, endpoint, and requested size. The Plugin permits only local adjustment through that policy. Both adapters separately support the configured native-parameter retry described in [parameters](parameters.md#visual-deliverables-and-transparency). If the attempt limit is reached, return the original image and factual warnings.
+When `transparency.llm_assisted.enabled=true`, prompt changes remain bounded by the policy. An additional image API request requires `allow_api_retry=true`, keeping the configured model, endpoint, and requested size. This is separate from the configured native-parameter retry described in [parameters](parameters.md#visual-deliverables-and-transparency). If the attempt limit is reached, return the original image and factual warnings.
 
 ## Cross-Industry Examples
 

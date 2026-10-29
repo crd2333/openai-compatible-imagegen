@@ -2,9 +2,9 @@
 
 Use QA when the user asks to inspect a file, verify a delivery size, confirm transparency, diagnose alpha geometry, or attach deterministic checks to generated output.
 
-Both release packages use the same `qa.v1` checks. Standalone includes them in CLI JSON and `delivery_ready`; the Codex Plugin maps delivery readiness to `deliveryReady` and persists QA with the related artifact or delivery receipt. QA does not change the model, endpoint, request parameters, or retry policy.
+`qa.v1` checks appear in CLI JSON, with delivery readiness reported as `delivery_ready`. QA does not change the model, endpoint, request parameters, or retry policy.
 
-The CLI examples below are for Standalone. Set `SkillDir` as shown in [Local Auth](../SKILL.md#local-auth). Plugin agents use their bundled MCP workflow.
+Set `SkillDir` as shown in [setup](setup.md#running-commands).
 
 ## Commands
 

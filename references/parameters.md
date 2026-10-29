@@ -1,10 +1,27 @@
 # Parameter Reference
 
-This reference describes the Standalone CLI surface. The Codex Plugin uses the same generation and delivery core through MCP, but reads the fixed Plugin user/project configuration instead of `auth.json`. Standalone keeps snake_case result fields such as `delivery_ready`; the Plugin maps the same public fact to `deliveryReady`.
+Use `imagegen.py <command> --help` for the complete flag list.
+
+## Core Flags
+
+| Flag | Purpose |
+| --- | --- |
+| `-p`, `--prompt` | Required prompt for generation or editing |
+| `-f`, `--file` | Output file |
+| `-i`, `--image` | Edit reference image; repeat for multiple inputs |
+| `-m`, `--mask` | Edit mask |
+| `--profile` | Model profile selection |
+| `--parameters` | Native JSON parameter object |
+| `--size`, `--aspect`, `--resolution` | API output dimensions |
+| `--quality` | Provider quality value |
+| `--n` | Requested image count, 1–16 |
+| `--format` | `png`, `jpeg`, or `webp` |
+| `--timeout` | Request timeout in seconds |
+| `--concurrency` | Batch worker limit |
 
 ## Parameter Priority
 
-For v2 providers, model profiles, native protocols, and canvas fields, see [model configuration](models.md). `list-models` lists configured profiles without a provider request. `--profile` selects an exact profile or unique alias; JSONL rows can set `modelProfileId`. `--parameters` accepts a native JSON object, with row-level `parameters` taking precedence. V2 image defaults belong to each profile; shared defaults contain execution settings. These controls do not apply to ChatGPT host generation.
+For v2 providers, model profiles, and native JSON fields, see [model configuration](models.md). `list-models` lists configured profiles without a provider request. `--profile` selects an exact profile or unique alias; JSONL rows can set `modelProfileId`. `--parameters` accepts a native JSON object, with row-level `parameters` taking precedence. V2 image defaults belong to each profile; shared defaults contain execution settings.
 
 ```text
 per-row batch fields > shared command flags > auth.json defaults > built-in defaults
@@ -66,7 +83,7 @@ Flat and v1 configurations retain pixel presets and legacy size precedence. In v
 | `xhigh`, `max` | Additional quality levels for models that support them, including GPT Image 2.5 Sunburst and Flare |
 | `auto` | Backend-selected quality |
 
-V1 OpenAI-compatible configurations accept these six values. V2 preserves non-empty provider quality values without a future model-value whitelist, where the selected protocol has a quality field. A provider may support only a subset; unsupported requests fail without changing quality, model, or endpoint. Atlas retains `low`, `medium`, and `high`. Host generation through ChatGPT does not expose these API model controls.
+V1 OpenAI-compatible configurations accept these six values. V2 preserves non-empty provider quality values without a future model-value whitelist, where the selected protocol has a quality field. A provider may support only a subset; unsupported requests fail without changing quality, model, or endpoint. Atlas retains `low`, `medium`, and `high`.
 
 ## Visual Deliverables and Transparency
 
@@ -98,7 +115,7 @@ The prompt-only allow list matches `model`, `mode`, and exact pixel `size` toget
 
 Only add a prompt-only rule after verifying that exact backend combination. In particular, do not turn a 2K or 4K request into a 1K request just to use an alpha prompt. A missing prompt-only rule never prevents the image request: it selects the configured local route when processing is allowed, or preserves and inspects the API original when processing is disabled.
 
-Example for flat Standalone or v1 configuration (v2 places `transparency` inside the selected model profile and keeps `postprocess` at the top level):
+Example for flat or v1 configuration (v2 places `transparency` inside the selected model profile and keeps `postprocess` at the top level):
 
 ```json
 {
@@ -131,13 +148,13 @@ Example for flat Standalone or v1 configuration (v2 places `transparency` inside
 }
 ```
 
-Standalone `auth.json.model` accepts any non-empty model ID required by the provider; the runtime does not reject nonstandard names. `native.model_ids` is only a capability declaration. An empty array applies no ID prefilter, and an explicit `native-alpha` request is still sent when the configured model is absent from the list, provided native transparency is enabled and the protocol supports it. The provider decides whether that model supports the parameter. Native requests use `background="transparent"` and PNG output. A transparency-related HTTP 400/422 allows one retry without the parameter when `retry_without_parameter=true`; a successful retry uses `native.fallback_route` only when local processing is allowed. Otherwise it inspects source alpha without changing pixels. Set `retry_without_parameter=false` to disable the retry. The result reports parameter rejection, retry use, final route, and QA status.
+`auth.json.model` accepts any non-empty model ID required by the provider; the runtime does not reject nonstandard names. `native.model_ids` is only a capability declaration. An empty array applies no ID prefilter, and an explicit `native-alpha` request is still sent when the configured model is absent from the list, provided native transparency is enabled and the protocol supports it. The provider decides whether that model supports the parameter. Native requests use `background="transparent"` and PNG output. A transparency-related HTTP 400/422 allows one retry without the parameter when `retry_without_parameter=true`; a successful retry uses `native.fallback_route` only when local processing is allowed. Otherwise it inspects source alpha without changing pixels. Set `retry_without_parameter=false` to disable the retry. The result reports parameter rejection, retry use, final route, and QA status.
 
-The native retry preserves the effective processing choice: Standalone uses the per-run switch or inherits `postprocess.enabled`; the Plugin uses its resolved configuration. Disabling local processing does not disable the API retry. If the initial native request succeeds but returns an opaque image, Standalone preserves it with unmet transparency; Plugin generation can additionally select local fallback when processing is allowed.
+The native retry preserves the per-run processing choice or inherited `postprocess.enabled`. Disabling local processing does not disable the API retry. If the initial native request succeeds but returns an opaque image, preserve it with unmet transparency.
 
 `llm_assisted.max_attempts` is the total number of transparency attempts, including the first run, and must be from 1 to 3. `allow_parameter_tuning` permits documented parameter changes, `allow_route_change` permits compatible route changes, and `allow_api_retry` permits another image API request. API retry remains disabled by default.
 
-The old `capabilities.transparent_background` setting and user-facing `background=transparent` request value are not supported. Remove them instead of translating them into an API parameter. The runtime may still send `background="transparent"` when the configured route is `native-alpha`. Batch `background` values are trimmed case-insensitively, but only `auto`, `opaque`, or an omitted value are accepted; every other value fails before the API request.
+`capabilities.transparent_background` is unsupported; configure `transparency.native` instead. The CLI `--background` accepts only `auto` or `opaque`. The runtime may still send `background="transparent"` when the configured route is `native-alpha`. Batch `background` values are trimmed case-insensitively, but only `auto`, `opaque`, or an omitted value are accepted; every other value fails before the API request.
 
 Real alpha pixels depend on the returned image. Use `inspect-image --expect-transparent` or request `--qa` to report technical results.
 
@@ -193,7 +210,8 @@ High concurrency can trigger rate limits, failures, or unexpected cost.
 | `quality`, `n`, `format`, `background` | API request options; background is `auto` or `opaque` |
 | `transparent`, `asset` | Explicit output intentions |
 | `images`, `mask` | Edit inputs |
-| `model`, `timeout` | Per-task request overrides |
+| `model`, `modelProfileId`, `timeout` | Per-task model/profile and timeout overrides |
+| `parameters` | Native JSON parameter object |
 | `qa`, `components` | Optional deterministic QA |
 | `delivery_size`, `grid`, `expected_count` | Optional derived outputs |
 | `resample`, `fit`, `safe_margin` | Optional transform behavior |
@@ -221,4 +239,4 @@ An HTTP 4xx response is an API rejection (`error_kind=api_rejected`) and is not 
 
 Batch mode writes `manifest.json`. `original_files` contains every published API source, `files` contains each source followed by successful derivatives, and `derived_files` contains only derived paths. `api_delivery` records requested and actual published count, format, size, item positions, and paths. Count, format, and size deviations are warnings and do not change `ok=true`; an unusable item or target collision is reported per item while successful originals remain visible. Failed transforms or QA set `delivery_ready=false` while preserving the sources. Optional QA retains successful per-image derivatives and omits failed, unsupported, or not-evaluated peers when the result can be assigned to one image. A global derivative count or global QA failure omits the complete derivative set. The `qa` object remains available as evidence, and QA does not retry the request.
 
-Image responses may contain `data[].b64_json` or HTTP(S) `data[].url`. URL downloads use the configured `user_agent` and never forward the API key. PNG publication uses the 96 MiB full and 512 MiB streaming scanline budgets described above. JPEG receives bounded framing checks; VP8L WebP is entropy-decoded to the declared pixel count without retaining the main pixel image, so truncated lossless streams are rejected.
+GPT Image requests omit `response_format`. Image responses may contain `data[].b64_json` or HTTP(S) `data[].url`. URL downloads use the configured `user_agent` and never forward the API key. PNG publication uses the 96 MiB full and 512 MiB streaming scanline budgets described above. JPEG receives bounded framing checks; VP8L WebP is entropy-decoded to the declared pixel count without retaining the main pixel image, so truncated lossless streams are rejected.

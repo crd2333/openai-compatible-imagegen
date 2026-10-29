@@ -200,14 +200,21 @@ test("documentation indexes route to the complete user guide catalog", async () 
   }
 });
 
-test("Standalone runtime references include native transparency and its retry control", async () => {
-  for (const relativePath of ["SKILL.md", "references/parameters.md", "references/postprocess.md", "references/prompting.md", "references/qa.md"]) {
-    const document = await readFile(path.join(projectRoot, relativePath), "utf8");
-    assert.match(document, /`native-alpha`/, relativePath);
-  }
+test("Standalone entry routes optional details to runtime references", async () => {
   const skill = await readFile(path.join(projectRoot, "SKILL.md"), "utf8");
-  assert.match(skill, /retry_without_parameter/, "Standalone native retry policy");
-  assert.match(skill, /`atlas`/, "Standalone optional provider protocol");
+  for (const name of ["setup", "models", "parameters", "postprocess", "prompting", "qa"]) {
+    assert.ok(skill.includes(`references/${name}.md`), name);
+    await readFile(path.join(projectRoot, `references/${name}.md`), "utf8");
+  }
+  assert.doesNotMatch(skill, /script_path|auth_json|path mismatch/);
+  for (const name of ["parameters", "postprocess", "prompting", "qa"]) {
+    const document = await readFile(path.join(projectRoot, `references/${name}.md`), "utf8");
+    assert.match(document, /`native-alpha`/, name);
+  }
+  const parameters = await readFile(path.join(projectRoot, "references/parameters.md"), "utf8");
+  assert.match(parameters, /retry_without_parameter/, "native retry policy");
+  const models = await readFile(path.join(projectRoot, "references/models.md"), "utf8");
+  assert.match(models, /`atlas`/, "optional provider protocol");
 });
 
 test("English and Chinese README files keep commands and public links synchronized", async () => {

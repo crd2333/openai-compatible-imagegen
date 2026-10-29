@@ -93,6 +93,7 @@ const standaloneFiles = [
   "references/postprocess.md",
   "references/prompting.md",
   "references/qa.md",
+  "references/setup.md",
   ...standaloneRuntimeFiles.map((name) => `scripts/${name}`),
   "scripts/quick-init.py",
 ].sort();
@@ -206,15 +207,14 @@ test("Standalone releases remain independent from Plugin filesystem adapters", a
 });
 
 
-test("shared prompting guidance separates assisted retries from native parameter retries", async () => {
+test("distribution prompting guidance separates assisted retries from native parameter retries", async () => {
   const prompting = await readFile(path.join(projectRoot, "references/prompting.md"), "utf8");
   const pluginSkill = await readFile(
     path.join(projectRoot, "skills/openai-compatible-imagegen/SKILL.md"),
     "utf8",
   );
-  assert.match(prompting, /Standalone adapter[^.]*additional image API request only when `allow_api_retry=true`/i);
-  assert.match(prompting, /Plugin[^.]*only local adjustment through that policy/i);
-  assert.match(prompting, /Both adapters separately support the configured native-parameter retry/i);
+  assert.match(prompting, /additional image API request requires `allow_api_retry=true`/i);
+  assert.match(prompting, /separate from the configured native-parameter retry/i);
   assert.match(pluginSkill, /Even if policy contains `allow_api_retry`, do not request the image API again/);
 });
 

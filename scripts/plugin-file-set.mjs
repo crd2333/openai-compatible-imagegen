@@ -86,6 +86,7 @@ export const standaloneReleaseFiles = Object.freeze([
   "references/postprocess.md",
   "references/prompting.md",
   "references/qa.md",
+  "references/setup.md",
   ...standaloneRuntimeFileNames.map((name) => `scripts/${name}`),
   "scripts/quick-init.py",
 ].sort());

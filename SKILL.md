@@ -45,7 +45,9 @@ Run a JSONL batch:
 python3 scripts/imagegen.py batch --input "prompts.jsonl" --out "outputs/imagegen" --concurrency 3
 ```
 
-Use `--size` for exact API pixels or `--aspect` with `--resolution` for shape and resolution. Use `--delivery-size` for a separate local resize. An explicit output extension must match the resolved format.
+Use `--size` for exact API pixels or `--aspect` with `--resolution` for shape and resolution. Before choosing a custom generation size, inspect the selected model’s `limits.output_size`; reference-image dimensions and missing limits do not establish API support. Preserve explicit user sizes and leave omitted flags unset when configuration should decide. Use `--delivery-size` for a separate local resize: `--fit contain` preserves proportions with padding, while the default `stretch` can distort them. See [size guidance](references/parameters.md#size-guidance). An explicit output extension must match the resolved format.
+
+OpenAI-compatible generation also supports GIF and static SVG when the provider does. For those formats or a separate `--markup` edit annotation layer, read [model configuration](references/models.md) and [parameters](references/parameters.md) before constructing the request.
 
 For transparent output, add `--transparent` and read the transparency references below. Keep the base prompt semantic; the runtime adds route-specific background and alpha instructions. Local transforms and QA are opt-in unless required by transparent delivery.
 

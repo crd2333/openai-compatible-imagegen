@@ -51,7 +51,7 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 var define_RELEASE_IDENTITY_default;
 var init_define_RELEASE_IDENTITY = __esm({
   "<define:__RELEASE_IDENTITY__>"() {
-    define_RELEASE_IDENTITY_default = { pluginId: "openai-compatible-imagegen", pluginVersion: "1.6.0", serverBuildDigest: "a3a84771b101ebaf39c27e1712f91679aed1acc51b7af8076a00f8d7979f8c9b", widgetAssetDigest: "636e4adf801bfa581c0c9cf9b9854f06e941eeb2ebb6d0ba53111d9976c36998", fingerprint: "547d663238217d3628ba", resourceUris: { result: "ui://openai-compatible-imagegen/result-547d663238217d3628ba.html", editor: "ui://openai-compatible-imagegen/editor-547d663238217d3628ba.html" } };
+    define_RELEASE_IDENTITY_default = { pluginId: "openai-compatible-imagegen", pluginVersion: "1.7.0", serverBuildDigest: "a9d3ad7bcbd3f4b3ae3ef2a1bc036b3fe81923347db10f81bba3c8dd1960cd8c", widgetAssetDigest: "ae200b175d6da2ae5c86b3cbbe725e58d95b751b59f3496f4b5979924e1dfaeb", fingerprint: "4a4a39f16dc51f2f7ce9", resourceUris: { result: "ui://openai-compatible-imagegen/result-4a4a39f16dc51f2f7ce9.html", editor: "ui://openai-compatible-imagegen/editor-4a4a39f16dc51f2f7ce9.html" } };
   }
 });
 
@@ -22279,7 +22279,7 @@ var MAX_MASK_RASTER_PASSES = 16;
 var MAX_MASK_RASTER_WORK = 32e6;
 var MASK_SEGMENT_LEAF_SIZE = 8;
 var MASK_RASTER_TILE_SIZE = 64;
-async function saveImageAnnotations({ imageId, items }, {
+async function saveImageAnnotations({ imageId, items, markupPngBase64 }, {
   artifactRoot,
   modelProfileId = void 0,
   activeProfile = "primary/gpt-image-2",
@@ -22293,6 +22293,8 @@ async function saveImageAnnotations({ imageId, items }, {
   const previewFile = "preview.svg";
   const maskItems = items.filter((item) => item.type === "mask");
   const maskFile = maskItems.length ? "mask.png" : null;
+  if (markupPngBase64 && maskFile) throw new Error("markup cannot be combined with a mask");
+  const markupFile = markupPngBase64 ? "markup.png" : null;
   let maskPolicy = null;
   const preview = buildPreview(artifact, items);
   let mask = null;
@@ -22338,6 +22340,7 @@ async function saveImageAnnotations({ imageId, items }, {
     maskFile,
     maskMimeType: maskFile ? "image/png" : null,
     maskPolicy,
+    ...markupFile ? { markupFile } : {},
     createdAt: (/* @__PURE__ */ new Date()).toISOString()
   };
   await runRepositoryOperation({
@@ -22346,6 +22349,7 @@ async function saveImageAnnotations({ imageId, items }, {
     annotationId,
     previewBase64: Buffer.from(preview, "utf8").toString("base64"),
     maskBase64: mask ? mask.toString("base64") : null,
+    ...markupFile ? { markupBase64: markupPngBase64 } : {},
     record: record2
   });
   return {
@@ -22355,7 +22359,8 @@ async function saveImageAnnotations({ imageId, items }, {
     previewMimeType: record2.previewMimeType,
     hasMask: Boolean(maskFile),
     maskMimeType: record2.maskMimeType,
-    maskPolicy
+    maskPolicy,
+    ...markupFile ? { hasMarkup: true } : {}
   };
 }
 async function readImageAnnotation(annotationId, {
@@ -22376,7 +22381,8 @@ async function readImageAnnotation(annotationId, {
     const previewPath = path3.join(dataRoot, "annotations", annotationId, record2.previewFile);
     const maskPath = record2.maskFile ? path3.join(dataRoot, "annotations", annotationId, record2.maskFile) : null;
     validateMaskPolicyHash(record2.maskPolicy, annotationId);
-    return { ...record2, maskPolicy: record2.maskPolicy ?? null, previewPath, maskPath };
+    const markupPath = record2.markupFile ? path3.join(dataRoot, "annotations", annotationId, record2.markupFile) : null;
+    return { ...record2, maskPolicy: record2.maskPolicy ?? null, previewPath, maskPath, markupPath };
   } catch (error40) {
     if (error40?.code === "ENOENT" || /repository entry not found/i.test(error40?.message || "")) {
       throw new Error(`annotation not found: ${annotationId}`);
@@ -31242,238 +31248,94 @@ import { fileURLToPath as fileURLToPath3 } from "node:url";
 
 // mcp/image-tool-schemas.mjs
 init_define_RELEASE_IDENTITY();
-var imageIdSchema = external_exports2.string().regex(/^img_[0-9A-HJKMNP-TV-Z]{26}$/).describe("Stable image ID in the project artifact repository");
-var projectBindingIdSchema = external_exports2.string().regex(/^pbind_[0-9a-f]{64}$/).describe("Image project binding ID");
-var batchIdSchema = external_exports2.string().regex(/^batch_[0-9A-HJKMNP-TV-Z]{26}$/).describe("Immutable batch manifest ID");
-var deliveryReceiptIdSchema = external_exports2.string().regex(/^delivery_[0-9a-f]{64}$/);
-var outputSchema = {
-  size: external_exports2.string().optional(),
-  quality: external_exports2.string().min(1).optional(),
-  aspectRatio: external_exports2.string().min(1).optional(),
-  resolution: external_exports2.string().min(1).optional(),
-  parameters: external_exports2.record(external_exports2.unknown()).optional(),
-  format: external_exports2.enum(["png", "jpeg", "webp"]).optional(),
-  count: external_exports2.number().int().min(1).max(10).optional(),
-  background: external_exports2.enum(["auto", "opaque"]).optional()
+
+// mcp/image-size-contract.mjs
+init_define_RELEASE_IDENTITY();
+var positiveInteger = external_exports2.number().int().positive().max(Number.MAX_SAFE_INTEGER);
+var aspectRatio = external_exports2.number().finite().min(1).max(Number.MAX_SAFE_INTEGER);
+var pixelSize = external_exports2.string().regex(/^[1-9][0-9]*x[1-9][0-9]*$/).refine((value) => value.split("x").every((edge) => Number.isSafeInteger(Number(edge))));
+var sizeLimitFields = {
+  allowed_sizes: external_exports2.array(pixelSize).min(1).optional(),
+  multiple_of: positiveInteger.optional(),
+  min_edge: positiveInteger.optional(),
+  max_edge: positiveInteger.optional(),
+  min_pixels: positiveInteger.optional(),
+  max_pixels: positiveInteger.optional(),
+  max_aspect_ratio: aspectRatio.optional()
 };
-var transparencyInputSchema = external_exports2.object({
-  route: external_exports2.enum(["chroma-matting", "emissive-alpha", "mask-alpha", "prompt-alpha", "native-alpha"]).optional(),
-  options: external_exports2.record(external_exports2.union([external_exports2.string(), external_exports2.number(), external_exports2.boolean()])).optional(),
-  maskImageId: imageIdSchema.optional()
-}).strict();
-var batchRequestIdSchema = external_exports2.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/);
-var batchCountSchema = external_exports2.number().int().min(1).max(16).optional();
-var batchDeliverySchema = external_exports2.object({
-  deliverySize: external_exports2.string().regex(/^\d+[x*]\d+$/).optional(),
-  fit: external_exports2.enum(["stretch", "contain"]).optional(),
-  resample: external_exports2.enum(["nearest", "bilinear"]).optional(),
-  safeMargin: external_exports2.number().min(0).lt(0.5).optional(),
-  qa: external_exports2.boolean().optional(),
-  components: external_exports2.boolean().optional(),
-  grid: external_exports2.union([
-    external_exports2.string().regex(/^\d+[x*]\d+$/),
-    external_exports2.object({ rows: external_exports2.number().int().positive(), cols: external_exports2.number().int().positive() }).strict()
-  ]).optional(),
-  expectedCount: external_exports2.number().int().min(1).max(10).optional(),
-  preview: external_exports2.object({
-    sizes: external_exports2.array(external_exports2.string().regex(/^\d+[x*]\d+$/)).min(1).max(10),
-    backgrounds: external_exports2.array(external_exports2.enum(["transparent", "white", "black", "gray", "checker"])).min(1).max(5).optional(),
-    resample: external_exports2.enum(["nearest", "bilinear"]).optional()
-  }).strict().optional(),
-  transparency: transparencyInputSchema.optional()
-}).strict();
-var batchGenerateItemSchema = external_exports2.object({
-  requestId: batchRequestIdSchema,
-  operation: external_exports2.literal("generate"),
-  prompt: external_exports2.string().min(1),
-  modelProfileId: external_exports2.string().min(1).optional(),
-  transparency: transparencyInputSchema.optional(),
-  delivery: batchDeliverySchema.optional(),
-  ...outputSchema,
-  count: batchCountSchema
-}).strict();
-var batchEditItemSchema = external_exports2.object({
-  requestId: batchRequestIdSchema,
-  operation: external_exports2.literal("edit"),
-  parentImageId: imageIdSchema,
-  referenceImageIds: external_exports2.array(imageIdSchema).max(10).optional(),
-  prompt: external_exports2.string().min(1),
-  modelProfileId: external_exports2.string().min(1).optional(),
-  transparency: transparencyInputSchema.optional(),
-  delivery: batchDeliverySchema.optional(),
-  ...outputSchema,
-  count: batchCountSchema
-}).strict();
-var batchItemsSchema = external_exports2.array(external_exports2.discriminatedUnion("operation", [
-  batchGenerateItemSchema,
-  batchEditItemSchema
-])).min(1).max(64).superRefine((items, context) => {
-  const seen = /* @__PURE__ */ new Set();
-  let totalCount = 0;
-  for (const [index, item] of items.entries()) {
-    if (seen.has(item.requestId)) {
-      context.addIssue({
-        code: external_exports2.ZodIssueCode.custom,
-        message: "requestId must be unique within a batch",
-        path: [index, "requestId"]
-      });
-    }
-    seen.add(item.requestId);
-    totalCount += item.count ?? 1;
+var outputSizeLimitsSchema = external_exports2.object(sizeLimitFields).strict().superRefine((rules, context) => {
+  const invalid = () => context.addIssue({ code: external_exports2.ZodIssueCode.custom, message: "inconsistent output size limits" });
+  for (const unit of ["edge", "pixels"]) {
+    if ((rules[`min_${unit}`] ?? 1) > (rules[`max_${unit}`] ?? Number.MAX_SAFE_INTEGER)) invalid();
   }
-  if (totalCount > 64) {
-    context.addIssue({
-      code: external_exports2.ZodIssueCode.custom,
-      message: "batch image count must not exceed 64",
-      path: []
-    });
+  for (const size of rules.allowed_sizes ?? []) {
+    const [width, height] = size.split("x").map(Number);
+    const short = Math.min(width, height), long = Math.max(width, height);
+    if (rules.multiple_of && (width % rules.multiple_of || height % rules.multiple_of) || rules.max_aspect_ratio && long > short * rules.max_aspect_ratio || short < (rules.min_edge ?? 1) || long > (rules.max_edge ?? Number.MAX_SAFE_INTEGER) || width * height < (rules.min_pixels ?? 1) || rules.max_pixels && width * height > rules.max_pixels) invalid();
   }
 });
-var imageArtifactOutputSchema = external_exports2.object({
-  id: imageIdSchema,
-  parentIds: external_exports2.array(imageIdSchema),
-  childIds: external_exports2.array(imageIdSchema),
-  mimeType: external_exports2.enum(["image/png", "image/jpeg", "image/webp"]),
-  width: external_exports2.number().int().positive(),
-  height: external_exports2.number().int().positive(),
-  provider: external_exports2.string().min(1),
-  model: external_exports2.string().min(1),
-  operation: external_exports2.enum(["generate", "edit", "derive", "import"]),
-  prompt: external_exports2.string(),
-  parameters: external_exports2.record(external_exports2.unknown()),
-  annotationId: external_exports2.string().regex(/^ann_[0-9A-HJKMNP-TV-Z]{26}$/).nullable(),
-  createdAt: external_exports2.string().datetime(),
-  derivedFrom: imageIdSchema.optional(),
-  deliveryKind: external_exports2.string().regex(/^[a-z][a-z0-9-]{0,63}$/).optional()
+var modelLimitsSchema = external_exports2.object({
+  max_input_images: positiveInteger.optional(),
+  output_size: outputSizeLimitsSchema.optional()
 }).strict();
-var imageArtifactsOutputSchema = external_exports2.object({
-  artifacts: external_exports2.array(imageArtifactOutputSchema).min(1).max(10),
-  artifact: imageArtifactOutputSchema.optional()
-}).strict();
-var deliveryReceiptResultSchema = external_exports2.object({
-  sourceArtifactId: imageIdSchema,
-  deliveryReceiptId: deliveryReceiptIdSchema.optional(),
-  deliveryReady: external_exports2.boolean(),
-  artifacts: external_exports2.array(imageArtifactOutputSchema).max(10),
-  qa: external_exports2.record(external_exports2.unknown()).nullable().optional(),
-  warnings: external_exports2.array(external_exports2.string()).max(20).optional(),
-  summary: external_exports2.record(external_exports2.unknown()).optional(),
-  error: external_exports2.object({
-    code: external_exports2.string().regex(/^[a-z][a-z0-9_]{0,63}$/),
-    message: external_exports2.string().min(1)
-  }).strict().optional()
-}).strict();
-var batchDeliveryReceiptSchema = external_exports2.object({
-  deliveryReady: external_exports2.boolean(),
-  results: external_exports2.array(deliveryReceiptResultSchema).min(1).max(16),
-  artifactIds: external_exports2.array(imageIdSchema).max(160)
-}).strict();
-var apiDeliverySchema = external_exports2.object({
-  status: external_exports2.enum(["published", "published_with_warnings", "partial"]),
-  requestedCount: external_exports2.number().int().min(1).max(16),
-  returnedCount: external_exports2.number().int().nonnegative(),
-  publishedCount: external_exports2.number().int().min(1).max(16),
-  items: external_exports2.array(external_exports2.object({
-    responseIndex: external_exports2.number().int().min(1).max(16),
-    artifactId: imageIdSchema,
-    actualFormat: external_exports2.enum(["png", "jpeg", "webp"]),
-    width: external_exports2.number().int().positive(),
-    height: external_exports2.number().int().positive()
-  }).strict()).max(16),
-  issues: external_exports2.array(external_exports2.object({
-    code: external_exports2.enum([
-      "count_mismatch",
-      "format_mismatch",
-      "item_publish_failed",
-      "item_unusable",
-      "size_mismatch",
-      "total_bytes_exceeded"
-    ]),
-    responseIndex: external_exports2.number().int().min(1).max(16).optional()
-  }).strict()).max(64)
-}).strict();
-var batchManifestResultSchema = external_exports2.discriminatedUnion("ok", [
-  external_exports2.object({
-    requestId: batchRequestIdSchema,
-    operation: external_exports2.enum(["generate", "edit"]),
-    ok: external_exports2.literal(true),
-    artifactIds: external_exports2.array(imageIdSchema).max(16),
-    apiDelivery: apiDeliverySchema.optional(),
-    deliveryReceiptIds: external_exports2.array(deliveryReceiptIdSchema).max(16),
-    deliveryArtifactIds: external_exports2.array(imageIdSchema).max(160)
-  }).strict(),
-  external_exports2.object({
-    requestId: batchRequestIdSchema,
-    operation: external_exports2.enum(["generate", "edit"]),
-    ok: external_exports2.literal(false),
-    errorCode: external_exports2.string().regex(/^[a-z][a-z0-9_]{0,63}$/)
-  }).strict()
-]);
-var batchManifestOutputSchema = external_exports2.object({
-  schemaVersion: external_exports2.literal("batch-manifest.v1"),
-  summary: external_exports2.object({
-    total: external_exports2.number().int().min(1).max(64),
-    succeeded: external_exports2.number().int().min(0).max(64),
-    failed: external_exports2.number().int().min(0).max(64),
-    artifactCount: external_exports2.number().int().min(0).max(64)
-  }).strict(),
-  results: external_exports2.array(batchManifestResultSchema).min(1).max(64),
-  batchId: batchIdSchema,
-  createdAt: external_exports2.string().datetime()
-}).strict();
-var imageBatchResultOutputSchema = external_exports2.discriminatedUnion("ok", [
-  external_exports2.object({
-    requestId: batchRequestIdSchema,
-    operation: external_exports2.enum(["generate", "edit"]),
-    ok: external_exports2.literal(true),
-    artifacts: external_exports2.array(imageArtifactOutputSchema).min(1).max(16),
-    apiDelivery: apiDeliverySchema.optional(),
-    delivery: batchDeliveryReceiptSchema.optional()
-  }).strict(),
-  external_exports2.object({
-    requestId: batchRequestIdSchema,
-    operation: external_exports2.enum(["generate", "edit"]),
-    ok: external_exports2.literal(false),
-    error: external_exports2.object({
-      code: external_exports2.string().regex(/^[a-z][a-z0-9_]{0,63}$/),
-      message: external_exports2.string().min(1)
-    }).strict()
-  }).strict()
-]);
-var imageBatchOutputSchema = external_exports2.object({
-  results: external_exports2.array(imageBatchResultOutputSchema).min(1).max(64),
-  summary: external_exports2.object({
-    total: external_exports2.number().int().min(1).max(64),
-    succeeded: external_exports2.number().int().min(0).max(64),
-    failed: external_exports2.number().int().min(0).max(64),
-    artifactCount: external_exports2.number().int().min(0).max(64)
-  }).strict(),
-  artifactIds: external_exports2.array(imageIdSchema).max(64),
-  manifestReady: external_exports2.boolean(),
-  batchId: batchIdSchema.optional(),
-  manifestCreatedAt: external_exports2.string().datetime().optional(),
-  manifestError: external_exports2.object({
-    code: external_exports2.string().regex(/^[a-z][a-z0-9_]{0,63}$/),
-    message: external_exports2.string().min(1)
-  }).strict().optional()
-}).strict();
-var deliveryInputSchema = batchDeliverySchema;
-var imageDeliveryOutputSchema = external_exports2.object({
-  sourceArtifactId: imageIdSchema,
-  deliveryReceiptId: deliveryReceiptIdSchema.optional(),
-  deliveryReady: external_exports2.boolean(),
-  artifacts: external_exports2.array(imageArtifactOutputSchema).max(10),
-  qa: external_exports2.record(external_exports2.unknown()).nullable().optional(),
-  warnings: external_exports2.array(external_exports2.string()).max(20).optional(),
-  summary: external_exports2.record(external_exports2.unknown()).optional()
-}).strict();
+function validModelLimits(limits, protocol) {
+  return modelLimitsSchema.safeParse(limits).success && (!Object.keys(limits.output_size ?? {}).length || ["openai-compatible", "atlas"].includes(protocol));
+}
+var imageSizeErrorDetailsSchema = external_exports2.discriminatedUnion("constraint", Object.entries(sizeLimitFields).map(([constraint, limit]) => external_exports2.object({ size: pixelSize, constraint: external_exports2.literal(constraint), limit: limit.unwrap() }).strict()));
+function safeImageSizeError(error40) {
+  if (error40?.code !== "image_size_unsupported") return void 0;
+  const parsed = imageSizeErrorDetailsSchema.safeParse(error40.details);
+  if (!parsed.success) return void 0;
+  const { size, constraint, limit } = parsed.data;
+  const [width, height] = size.split("x").map(Number);
+  let message;
+  if (constraint === "allowed_sizes") message = `\u751F\u6210\u5C3A\u5BF8 ${size} \u4E0D\u5728\u5F53\u524D\u6A21\u578B\u5141\u8BB8\u7684\u5C3A\u5BF8\u4E2D\uFF1A${limit.join(", ")}\u3002`;
+  else if (constraint === "multiple_of") message = `\u751F\u6210\u5C3A\u5BF8 ${size} \u7684\u5BBD\u9AD8\u5FC5\u987B\u90FD\u662F ${limit} \u7684\u500D\u6570\u3002`;
+  else if (constraint === "max_aspect_ratio") message = `\u751F\u6210\u5C3A\u5BF8 ${size} \u7684\u957F\u77ED\u8FB9\u6BD4\u4F8B\u4E3A ${(Math.max(width, height) / Math.min(width, height)).toFixed(2)}:1\uFF0C\u5F53\u524D\u6A21\u578B\u5141\u8BB8\u6700\u5927 ${limit}:1\u3002`;
+  else {
+    const edge = constraint.endsWith("edge"), minimum = constraint.startsWith("min_");
+    const actual = edge ? minimum ? Math.min(width, height) : Math.max(width, height) : width * height;
+    message = `\u751F\u6210\u5C3A\u5BF8 ${size} \u7684${edge ? "\u8FB9\u957F" : "\u50CF\u7D20\u603B\u91CF"}\u4E3A ${actual}\uFF0C\u5F53\u524D\u6A21\u578B\u8981\u6C42${minimum ? "\u81F3\u5C11" : "\u6700\u591A"} ${limit}\u3002`;
+  }
+  return { code: error40.code, message, details: parsed.data };
+}
 
 // mcp/tool-errors.mjs
 init_define_RELEASE_IDENTITY();
+var IMAGE_FAILURE_STAGES = ["provider_request", "response_decode", "artifact_publication"];
+var PROVIDER_ERROR_ID_PATTERN = /^[A-Za-z0-9_.\[\]-]{1,128}$/;
+function safeProviderError(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return void 0;
+  const result = {};
+  for (const key of ["code", "type", "param", "requestId"]) {
+    if (typeof value[key] === "string" && PROVIDER_ERROR_ID_PATTERN.test(value[key]) && !value[key].includes("[REDACTED]")) result[key] = value[key];
+  }
+  if (typeof value.message === "string" && value.message.trim() && value.message.length <= 1e3 && !/[\x00-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]/.test(value.message)) result.message = value.message;
+  return Object.keys(result).length ? result : void 0;
+}
+function safeImageFailure(error40) {
+  if (error40?.code !== "image_task_failed" || !error40.diagnostics) return void 0;
+  const { stage, httpStatus } = error40.diagnostics;
+  if (!IMAGE_FAILURE_STAGES.includes(stage) || httpStatus !== void 0 && (!Number.isInteger(httpStatus) || httpStatus < 100 || httpStatus > 599)) return void 0;
+  const diagnostics = { stage, ...httpStatus !== void 0 ? { httpStatus } : {} };
+  const providerError = stage === "provider_request" ? safeProviderError(error40.diagnostics.providerError) : void 0;
+  if (providerError) diagnostics.providerError = providerError;
+  const stages = {
+    provider_request: "\u56FE\u7247\u670D\u52A1\u8BF7\u6C42\u672A\u53D6\u5F97\u53EF\u7528\u54CD\u5E94",
+    response_decode: "\u56FE\u7247\u54CD\u5E94\u65E0\u6CD5\u89E3\u7801",
+    artifact_publication: "\u8FD4\u56DE\u56FE\u7247\u5728\u6821\u9A8C\u6216\u4FDD\u5B58\u65F6\u5931\u8D25"
+  };
+  return {
+    code: error40.code,
+    diagnostics,
+    message: `${stages[stage]}${httpStatus !== void 0 ? `\uFF08HTTP ${httpStatus}\uFF09` : ""}\u3002\u672A\u81EA\u52A8\u91CD\u65B0\u751F\u6210\u3002`
+  };
+}
 var STABLE_TOOL_ERROR_ENTRIES = [
+  ["image_size_unsupported", "\u751F\u6210\u5C3A\u5BF8\u4E0D\u6EE1\u8DB3\u5F53\u524D\u6A21\u578B\u58F0\u660E\u7684\u9650\u5236\u3002\u8BF7\u67E5\u770B list_image_models \u8FD4\u56DE\u7684 limits.output_size\uFF1B\u672A\u53D1\u9001\u56FE\u7247\u8BF7\u6C42\u3002"],
   ["background_parameter_rejected", "\u670D\u52A1\u62D2\u7EDD\u4E86\u660E\u786E\u6307\u5B9A\u7684 background \u53C2\u6570\uFF0C\u672A\u81EA\u52A8\u91CD\u8BD5\u3002\u8BF7\u8BE2\u95EE\u7528\u6237\u662F\u5426\u53BB\u6389\u8BE5\u53C2\u6570\u540E\u53D1\u8D77\u65B0\u8BF7\u6C42\uFF1B\u900F\u660E\u6548\u679C\u53EF\u80FD\u6539\u53D8\u3002"],
   ["local_image_request_invalid", "\u672C\u5730\u56FE\u7247\u4F20\u8F93\u8BF7\u6C42\u65E0\u6548\uFF0C\u8BF7\u4F7F\u7528\u9879\u76EE\u76F8\u5BF9\u8DEF\u5F84\u548C\u7A33\u5B9A\u56FE\u7247 ID\u3002"],
-  ["local_image_source_invalid", "\u65E0\u6CD5\u5BFC\u5165\u6E90\u56FE\u7247\uFF1A\u8BF7\u786E\u8BA4\u5B83\u662F\u9879\u76EE\u5185\u53EF\u5B89\u5168\u8BFB\u53D6\u7684 PNG\u3001JPEG \u6216 WebP\uFF0C\u4E14\u4E0D\u8D85\u8FC7 64 MiB \u548C 1 \u4EBF\u50CF\u7D20\u3002"],
+  ["local_image_source_invalid", "\u65E0\u6CD5\u5BFC\u5165\u6E90\u56FE\u7247\uFF1A\u8BF7\u786E\u8BA4\u5B83\u662F\u9879\u76EE\u5185\u53EF\u5B89\u5168\u8BFB\u53D6\u7684 PNG\u3001JPEG\u3001WebP\u3001GIF \u6216\u9759\u6001 SVG\uFF0C\u4E14\u4E0D\u8D85\u8FC7 64 MiB \u548C 1 \u4EBF\u50CF\u7D20\u3002"],
   ["local_image_import_failed", "\u65E0\u6CD5\u53D1\u5E03\u672C\u5730\u56FE\u7247\uFF0C\u8BF7\u68C0\u67E5 artifact \u4ED3\u5E93\u540E\u518D\u7EE7\u7EED\u3002"],
   ["local_image_destination_exists", "\u5BFC\u51FA\u76EE\u6807\u5DF2\u5B58\u5728\uFF0C\u672A\u8986\u76D6\u6587\u4EF6\uFF1B\u8BF7\u6307\u5B9A\u65B0\u7684\u76EE\u6807\u6587\u4EF6\u540D\u3002"],
   ["local_image_export_failed", "\u65E0\u6CD5\u5BFC\u51FA\u56FE\u7247\uFF1A\u8BF7\u68C0\u67E5\u56FE\u7247 ID\u3001\u9879\u76EE\u76F8\u5BF9\u8DEF\u5F84\u3001\u683C\u5F0F\u6269\u5C55\u540D\u53CA\u76EE\u5F55\u6743\u9650\uFF1B\u76EE\u6807\u4E0D\u80FD\u4F4D\u4E8E artifact \u4ED3\u5E93\u5185\u3002"],
@@ -31555,6 +31417,246 @@ function stableToolErrorCodeFromText(text) {
   return isStableToolErrorCode(code) ? code : null;
 }
 
+// mcp/image-tool-schemas.mjs
+var imageFailureDiagnosticsSchema = external_exports2.object({
+  stage: external_exports2.enum(IMAGE_FAILURE_STAGES),
+  httpStatus: external_exports2.number().int().min(100).max(599).optional(),
+  providerError: external_exports2.object({
+    code: external_exports2.string().regex(PROVIDER_ERROR_ID_PATTERN).optional(),
+    type: external_exports2.string().regex(PROVIDER_ERROR_ID_PATTERN).optional(),
+    param: external_exports2.string().regex(PROVIDER_ERROR_ID_PATTERN).optional(),
+    requestId: external_exports2.string().regex(PROVIDER_ERROR_ID_PATTERN).optional(),
+    message: external_exports2.string().min(1).max(1e3).optional()
+  }).strict().optional()
+}).strict();
+var imageIdSchema = external_exports2.string().regex(/^img_[0-9A-HJKMNP-TV-Z]{26}$/).describe("Stable image ID in the project artifact repository");
+var projectBindingIdSchema = external_exports2.string().regex(/^pbind_[0-9a-f]{64}$/).describe("Image project binding ID");
+var batchIdSchema = external_exports2.string().regex(/^batch_[0-9A-HJKMNP-TV-Z]{26}$/).describe("Immutable batch manifest ID");
+var deliveryReceiptIdSchema = external_exports2.string().regex(/^delivery_[0-9a-f]{64}$/);
+var outputSchema = {
+  size: external_exports2.string().optional(),
+  quality: external_exports2.string().min(1).optional(),
+  aspectRatio: external_exports2.string().min(1).optional(),
+  resolution: external_exports2.string().min(1).optional(),
+  parameters: external_exports2.record(external_exports2.unknown()).optional(),
+  format: external_exports2.enum(["png", "jpeg", "webp", "gif", "svg"]).optional(),
+  count: external_exports2.number().int().min(1).max(10).optional(),
+  background: external_exports2.enum(["auto", "opaque"]).optional()
+};
+var transparencyInputSchema = external_exports2.object({
+  route: external_exports2.enum(["chroma-matting", "emissive-alpha", "mask-alpha", "prompt-alpha", "native-alpha"]).optional(),
+  options: external_exports2.record(external_exports2.union([external_exports2.string(), external_exports2.number(), external_exports2.boolean()])).optional(),
+  maskImageId: imageIdSchema.optional()
+}).strict();
+var batchRequestIdSchema = external_exports2.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/);
+var batchCountSchema = external_exports2.number().int().min(1).max(16).optional();
+var batchDeliverySchema = external_exports2.object({
+  deliverySize: external_exports2.string().regex(/^\d+[x*]\d+$/).optional(),
+  fit: external_exports2.enum(["stretch", "contain"]).optional(),
+  resample: external_exports2.enum(["nearest", "bilinear"]).optional(),
+  safeMargin: external_exports2.number().min(0).lt(0.5).optional(),
+  qa: external_exports2.boolean().optional(),
+  components: external_exports2.boolean().optional(),
+  grid: external_exports2.union([
+    external_exports2.string().regex(/^\d+[x*]\d+$/),
+    external_exports2.object({ rows: external_exports2.number().int().positive(), cols: external_exports2.number().int().positive() }).strict()
+  ]).optional(),
+  expectedCount: external_exports2.number().int().min(1).max(10).optional(),
+  preview: external_exports2.object({
+    sizes: external_exports2.array(external_exports2.string().regex(/^\d+[x*]\d+$/)).min(1).max(10),
+    backgrounds: external_exports2.array(external_exports2.enum(["transparent", "white", "black", "gray", "checker"])).min(1).max(5).optional(),
+    resample: external_exports2.enum(["nearest", "bilinear"]).optional()
+  }).strict().optional(),
+  transparency: transparencyInputSchema.optional()
+}).strict();
+var batchGenerateItemSchema = external_exports2.object({
+  requestId: batchRequestIdSchema,
+  operation: external_exports2.literal("generate"),
+  prompt: external_exports2.string().min(1),
+  modelProfileId: external_exports2.string().min(1).optional(),
+  transparency: transparencyInputSchema.optional(),
+  delivery: batchDeliverySchema.optional(),
+  ...outputSchema,
+  count: batchCountSchema
+}).strict();
+var batchEditItemSchema = external_exports2.object({
+  requestId: batchRequestIdSchema,
+  operation: external_exports2.literal("edit"),
+  parentImageId: imageIdSchema,
+  referenceImageIds: external_exports2.array(imageIdSchema).max(10).optional(),
+  prompt: external_exports2.string().min(1),
+  modelProfileId: external_exports2.string().min(1).optional(),
+  transparency: transparencyInputSchema.optional(),
+  delivery: batchDeliverySchema.optional(),
+  ...outputSchema,
+  count: batchCountSchema
+}).strict();
+var batchItemsSchema = external_exports2.array(external_exports2.discriminatedUnion("operation", [
+  batchGenerateItemSchema,
+  batchEditItemSchema
+])).min(1).max(64).superRefine((items, context) => {
+  const seen = /* @__PURE__ */ new Set();
+  let totalCount = 0;
+  for (const [index, item] of items.entries()) {
+    if (seen.has(item.requestId)) {
+      context.addIssue({
+        code: external_exports2.ZodIssueCode.custom,
+        message: "requestId must be unique within a batch",
+        path: [index, "requestId"]
+      });
+    }
+    seen.add(item.requestId);
+    totalCount += item.count ?? 1;
+  }
+  if (totalCount > 64) {
+    context.addIssue({
+      code: external_exports2.ZodIssueCode.custom,
+      message: "batch image count must not exceed 64",
+      path: []
+    });
+  }
+});
+var imageArtifactOutputSchema = external_exports2.object({
+  id: imageIdSchema,
+  parentIds: external_exports2.array(imageIdSchema),
+  childIds: external_exports2.array(imageIdSchema),
+  mimeType: external_exports2.enum(["image/png", "image/jpeg", "image/webp", "image/gif", "image/svg+xml"]),
+  width: external_exports2.number().int().positive(),
+  height: external_exports2.number().int().positive(),
+  provider: external_exports2.string().min(1),
+  model: external_exports2.string().min(1),
+  operation: external_exports2.enum(["generate", "edit", "derive", "import"]),
+  prompt: external_exports2.string(),
+  parameters: external_exports2.record(external_exports2.unknown()),
+  annotationId: external_exports2.string().regex(/^ann_[0-9A-HJKMNP-TV-Z]{26}$/).nullable(),
+  createdAt: external_exports2.string().datetime(),
+  derivedFrom: imageIdSchema.optional(),
+  deliveryKind: external_exports2.string().regex(/^[a-z][a-z0-9-]{0,63}$/).optional()
+}).strict();
+var imageArtifactsOutputSchema = external_exports2.object({
+  artifacts: external_exports2.array(imageArtifactOutputSchema).min(1).max(10),
+  artifact: imageArtifactOutputSchema.optional()
+}).strict();
+var deliveryReceiptResultSchema = external_exports2.object({
+  sourceArtifactId: imageIdSchema,
+  deliveryReceiptId: deliveryReceiptIdSchema.optional(),
+  deliveryReady: external_exports2.boolean(),
+  artifacts: external_exports2.array(imageArtifactOutputSchema).max(10),
+  qa: external_exports2.record(external_exports2.unknown()).nullable().optional(),
+  warnings: external_exports2.array(external_exports2.string()).max(20).optional(),
+  summary: external_exports2.record(external_exports2.unknown()).optional(),
+  error: external_exports2.object({
+    code: external_exports2.string().regex(/^[a-z][a-z0-9_]{0,63}$/),
+    message: external_exports2.string().min(1)
+  }).strict().optional()
+}).strict();
+var batchDeliveryReceiptSchema = external_exports2.object({
+  deliveryReady: external_exports2.boolean(),
+  results: external_exports2.array(deliveryReceiptResultSchema).min(1).max(16),
+  artifactIds: external_exports2.array(imageIdSchema).max(160)
+}).strict();
+var apiDeliverySchema = external_exports2.object({
+  status: external_exports2.enum(["published", "published_with_warnings", "partial"]),
+  requestedCount: external_exports2.number().int().min(1).max(16),
+  returnedCount: external_exports2.number().int().nonnegative(),
+  publishedCount: external_exports2.number().int().min(1).max(16),
+  items: external_exports2.array(external_exports2.object({
+    responseIndex: external_exports2.number().int().min(1).max(16),
+    artifactId: imageIdSchema,
+    actualFormat: external_exports2.enum(["png", "jpeg", "webp", "gif", "svg"]),
+    width: external_exports2.number().int().positive(),
+    height: external_exports2.number().int().positive()
+  }).strict()).max(16),
+  issues: external_exports2.array(external_exports2.object({
+    code: external_exports2.enum([
+      "count_mismatch",
+      "format_mismatch",
+      "item_publish_failed",
+      "item_unusable",
+      "size_mismatch",
+      "total_bytes_exceeded"
+    ]),
+    responseIndex: external_exports2.number().int().min(1).max(16).optional()
+  }).strict()).max(64)
+}).strict();
+var batchManifestResultSchema = external_exports2.discriminatedUnion("ok", [
+  external_exports2.object({
+    requestId: batchRequestIdSchema,
+    operation: external_exports2.enum(["generate", "edit"]),
+    ok: external_exports2.literal(true),
+    artifactIds: external_exports2.array(imageIdSchema).max(16),
+    apiDelivery: apiDeliverySchema.optional(),
+    deliveryReceiptIds: external_exports2.array(deliveryReceiptIdSchema).max(16),
+    deliveryArtifactIds: external_exports2.array(imageIdSchema).max(160)
+  }).strict(),
+  external_exports2.object({
+    requestId: batchRequestIdSchema,
+    operation: external_exports2.enum(["generate", "edit"]),
+    ok: external_exports2.literal(false),
+    errorCode: external_exports2.string().regex(/^[a-z][a-z0-9_]{0,63}$/)
+  }).strict()
+]);
+var batchManifestOutputSchema = external_exports2.object({
+  schemaVersion: external_exports2.literal("batch-manifest.v1"),
+  summary: external_exports2.object({
+    total: external_exports2.number().int().min(1).max(64),
+    succeeded: external_exports2.number().int().min(0).max(64),
+    failed: external_exports2.number().int().min(0).max(64),
+    artifactCount: external_exports2.number().int().min(0).max(64)
+  }).strict(),
+  results: external_exports2.array(batchManifestResultSchema).min(1).max(64),
+  batchId: batchIdSchema,
+  createdAt: external_exports2.string().datetime()
+}).strict();
+var imageBatchResultOutputSchema = external_exports2.discriminatedUnion("ok", [
+  external_exports2.object({
+    requestId: batchRequestIdSchema,
+    operation: external_exports2.enum(["generate", "edit"]),
+    ok: external_exports2.literal(true),
+    artifacts: external_exports2.array(imageArtifactOutputSchema).min(1).max(16),
+    apiDelivery: apiDeliverySchema.optional(),
+    delivery: batchDeliveryReceiptSchema.optional()
+  }).strict(),
+  external_exports2.object({
+    requestId: batchRequestIdSchema,
+    operation: external_exports2.enum(["generate", "edit"]),
+    ok: external_exports2.literal(false),
+    error: external_exports2.object({
+      code: external_exports2.string().regex(/^[a-z][a-z0-9_]{0,63}$/),
+      message: external_exports2.string().min(1),
+      details: imageSizeErrorDetailsSchema.optional(),
+      diagnostics: imageFailureDiagnosticsSchema.optional()
+    }).strict()
+  }).strict()
+]);
+var imageBatchOutputSchema = external_exports2.object({
+  results: external_exports2.array(imageBatchResultOutputSchema).min(1).max(64),
+  summary: external_exports2.object({
+    total: external_exports2.number().int().min(1).max(64),
+    succeeded: external_exports2.number().int().min(0).max(64),
+    failed: external_exports2.number().int().min(0).max(64),
+    artifactCount: external_exports2.number().int().min(0).max(64)
+  }).strict(),
+  artifactIds: external_exports2.array(imageIdSchema).max(64),
+  manifestReady: external_exports2.boolean(),
+  batchId: batchIdSchema.optional(),
+  manifestCreatedAt: external_exports2.string().datetime().optional(),
+  manifestError: external_exports2.object({
+    code: external_exports2.string().regex(/^[a-z][a-z0-9_]{0,63}$/),
+    message: external_exports2.string().min(1)
+  }).strict().optional()
+}).strict();
+var deliveryInputSchema = batchDeliverySchema;
+var imageDeliveryOutputSchema = external_exports2.object({
+  sourceArtifactId: imageIdSchema,
+  deliveryReceiptId: deliveryReceiptIdSchema.optional(),
+  deliveryReady: external_exports2.boolean(),
+  artifacts: external_exports2.array(imageArtifactOutputSchema).max(10),
+  qa: external_exports2.record(external_exports2.unknown()).nullable().optional(),
+  warnings: external_exports2.array(external_exports2.string()).max(20).optional(),
+  summary: external_exports2.record(external_exports2.unknown()).optional()
+}).strict();
+
 // mcp/local-image-transfer.mjs
 var runtimePath = fileURLToPath3(new URL(
   import.meta.url.replaceAll("\\", "/").includes("/dist/server.mjs") ? "./scripts/local_image_transfer.py" : "../scripts/local_image_transfer.py",
@@ -31601,22 +31703,22 @@ function registerLocalImageTransferTools(server2, { projectContext, transfer, to
   }
   server2.registerTool("import_local_image", {
     title: "Import local image",
-    description: "Import an existing PNG, JPEG, or WebP from a project-relative sourcePath as an immutable image artifact. Use the returned artifact.id as edit_image.parentImageId or referenceImageIds. Does not call an image service or change the authentication route. Never use host image handoff tools for existing local files.",
+    description: "Import an existing PNG, JPEG, WebP, GIF, or static SVG from a project-relative sourcePath as an immutable image artifact. PNG, JPEG and WebP can be edit inputs; GIF/SVG are for preview and original export. Does not call an image service or change the authentication route. Never use host image handoff tools for existing local files.",
     inputSchema: { projectBindingId: projectBindingIdSchema, sourcePath: relativePathSchema },
     outputSchema: external_exports2.object({ artifact: imageArtifactOutputSchema }).strict(),
     annotations: localWriteAnnotations
   }, async ({ projectBindingId, sourcePath }) => await withProject2(projectBindingId, async (context) => {
     const result = await transfer.importImage({ sourcePath }, context);
-    return { content: [{ type: "text", text: `\u5DF2\u5BFC\u5165\u56FE\u7247 ${result.artifact.id}\uFF0C\u53EF\u4F7F\u7528\u6B64 ID \u7EE7\u7EED\u7F16\u8F91\u3002` }], structuredContent: result };
+    return { content: [{ type: "text", text: `\u5DF2\u5BFC\u5165\u56FE\u7247 ${result.artifact.id}\uFF0C\u53EF\u4F7F\u7528\u6B64 ID \u67E5\u770B\u6216\u5BFC\u51FA\u56FE\u7247\u3002` }], structuredContent: result };
   }));
   server2.registerTool("export_image_artifact", {
     title: "Export image artifact",
-    description: "Copy an image artifact's exact original bytes to a new project-relative destinationPath for downstream tools. Creates missing directories, never overwrites an existing file, and requires a matching PNG, JPEG, or WebP extension. Returns the relative destination, byte count, and SHA-256; the artifact remains immutable.",
+    description: "Copy an image artifact's exact original bytes to a new project-relative destinationPath for downstream tools. Creates missing directories, never overwrites an existing file, and requires a matching PNG, JPEG, WebP, GIF, or static SVG extension. Returns the relative destination, byte count, and SHA-256; the artifact remains immutable.",
     inputSchema: { projectBindingId: projectBindingIdSchema, imageId: imageIdSchema, destinationPath: relativePathSchema },
     outputSchema: external_exports2.object({
       imageId: imageIdSchema,
       destinationPath: relativePathSchema,
-      mimeType: external_exports2.enum(["image/png", "image/jpeg", "image/webp"]),
+      mimeType: external_exports2.enum(["image/png", "image/jpeg", "image/webp", "image/gif", "image/svg+xml"]),
       byteLength: external_exports2.number().int().positive(),
       sha256: external_exports2.string().regex(/^[0-9a-f]{64}$/)
     }).strict(),
@@ -31636,16 +31738,16 @@ var model_profile_contract_default = {
   version: 1,
   protocols: ["openai-compatible", "atlas", "xai-images", "gemini-interactions", "gemini-generate-content"],
   providerKeys: ["protocol", "base_url", "api_key", "api_key_env", "user_agent", "url_download", "proxy"],
-  profileKeys: ["provider", "model", "capabilities"],
+  profileKeys: ["provider", "model", "capabilities", "limits"],
   providerMetadataKeys: ["display_name", "endpoints"],
-  profileMetadataKeys: ["display_name", "aliases", "description", "defaults", "transparency", "limits", "parameters", "parameter_fields"],
+  profileMetadataKeys: ["display_name", "aliases", "description", "defaults", "transparency", "parameters", "parameter_fields"],
   parameterFieldKeys: ["title", "description", "type", "path", "default", "enum", "minimum", "maximum"],
   parameterFieldTypes: ["string", "integer", "number", "boolean", "object", "array"],
-  reservedParameterKeys: ["model", "prompt", "input", "contents", "image", "images", "mask", "n", "stream", "store", "previous_interaction_id", "api_key", "apiKey", "authorization", "headers", "base_url", "endpoint"],
+  reservedParameterKeys: ["model", "prompt", "input", "contents", "image", "images", "mask", "markup", "n", "stream", "store", "previous_interaction_id", "api_key", "apiKey", "authorization", "headers", "base_url", "endpoint"],
   executionDefaultKeys: ["timeout_seconds", "concurrency"],
   imageDefaultKeys: ["size", "quality", "output_format", "aspect_ratio", "resolution"],
   qualityValues: ["auto", "low", "medium", "high", "xhigh", "max"],
-  formatValues: ["png", "jpeg", "webp"],
+  formatValues: ["png", "jpeg", "webp", "gif", "svg"],
   reservedAliases: ["chatgpt", "codex", "codex\u5185\u7F6E", "codex \u5185\u7F6E", "apikey"]
 };
 
@@ -33581,7 +33683,7 @@ var DELIVERY_WARNING_CODES = /* @__PURE__ */ new Set([
 ]);
 var QA_STATUSES = /* @__PURE__ */ new Set(["fail", "not_evaluated", "partial", "pass"]);
 var CHECK_STATUSES = /* @__PURE__ */ new Set([...QA_STATUSES, "unsupported", "unmet"]);
-var IMAGE_FORMATS = /* @__PURE__ */ new Set(["jpeg", "png", "webp"]);
+var IMAGE_FORMATS = /* @__PURE__ */ new Set(["jpeg", "png", "webp", "gif", "svg"]);
 var QA_ROLES = /* @__PURE__ */ new Set(["delivery", "source"]);
 var QA_CHECK_NAMES = /* @__PURE__ */ new Set([
   "decode",
@@ -33977,7 +34079,7 @@ var API_DELIVERY_ISSUE_CODES = /* @__PURE__ */ new Set([
   "size_mismatch",
   "total_bytes_exceeded"
 ]);
-var API_IMAGE_FORMATS = /* @__PURE__ */ new Set(["jpeg", "png", "webp"]);
+var API_IMAGE_FORMATS = /* @__PURE__ */ new Set(["jpeg", "png", "webp", "gif", "svg"]);
 async function finalizeImageBatch({ outcomes, context, recordManifest }) {
   const results = outcomes.map((outcome) => outcome.result);
   const succeeded = results.filter((item) => item.ok).length;
@@ -34300,7 +34402,7 @@ function batchFailure(item, error40, fallbackCode) {
     requestId: item.requestId,
     operation: item.operation,
     ok: false,
-    error: {
+    error: safeImageSizeError(error40) ?? safeImageFailure(error40) ?? {
       code,
       message: stableToolErrorMessages.get(code)
     }
@@ -34331,11 +34433,15 @@ function unmanifestableBatchOutcome(item, artifactIds) {
 function createImageJobExecutor({ runTask, readArtifact, validateEdit, executeSingle }) {
   return Object.freeze({ executeItem, finalizeBatch });
   async function executeItem({ jobId, spec, index, context, checkpoint, saved, localAttempt, isCancelled }) {
+    let runtimeError;
     const runJobTask = async (task) => {
       let generated = saved;
       if (!generated) {
         const result2 = await runTask({ ...task, ...task.delivery ? { deferDelivery: true } : {} }, context);
-        if (!result2?.ok) return result2;
+        if (!result2?.ok) {
+          runtimeError = safeImageSizeError(result2?.error) ?? safeImageFailure(result2?.error);
+          return result2;
+        }
         const apiDelivery = safeApiDelivery(result2.apiDelivery, result2.artifacts.map(({ id }) => id), task.output?.count ?? 1);
         generated = generatedCheckpointSchema.parse({
           ok: true,
@@ -34382,7 +34488,7 @@ function createImageJobExecutor({ runTask, readArtifact, validateEdit, executeSi
     }
     const code = stableToolErrorCodeFromText(result?.content?.[0]?.text) ?? "image_task_failed";
     return {
-      result: { requestId: "image", operation: spec.kind, ok: false, error: { code, message: stableToolErrorMessages.get(code) } },
+      result: { requestId: "image", operation: spec.kind, ok: false, error: runtimeError ?? { code, message: stableToolErrorMessages.get(code) } },
       manifestResult: null,
       publishedArtifactIds: []
     };
@@ -34773,7 +34879,7 @@ var PROJECT_DEFAULT_KEYS = /* @__PURE__ */ new Set(["size", "quality", "output_f
 var STORAGE_KEYS = /* @__PURE__ */ new Set(["output_directory"]);
 var PROVIDER_KEYS = new Set(model_profile_contract_default.providerKeys);
 var MODEL_KEYS = new Set(model_profile_contract_default.profileKeys);
-var CAPABILITY_KEYS = /* @__PURE__ */ new Set(["generate", "edit", "mask", "multi_reference"]);
+var CAPABILITY_KEYS = /* @__PURE__ */ new Set(["generate", "edit", "mask", "markup", "multi_reference"]);
 var PROVIDER_PROTOCOLS = new Set(model_profile_contract_default.protocols);
 var DEFAULT_TIMEOUT_SECONDS = 600;
 var DEFAULT_CONCURRENCY = 3;
@@ -34794,7 +34900,8 @@ var CONFIG_TEMPLATE = Object.freeze({
   models: { [ACTIVE_PROFILE]: {
     provider: "primary",
     model: "gpt-image-2",
-    capabilities: { generate: true, edit: true, mask: true, multi_reference: true }
+    capabilities: { generate: true, edit: true, mask: true, multi_reference: true },
+    limits: { output_size: { multiple_of: 16, max_aspect_ratio: 3 } }
   } },
   defaults: { size: "1536x1024", quality: "auto", output_format: "png" },
   postprocess: { enabled: true },
@@ -34865,7 +34972,7 @@ async function initializeImageConfig({ userHome = os.homedir(), projectRoot, aut
     gitignoreUpdated: true,
     nextSteps: [
       ...authMode === "apikey" ? ["\u8BBE\u7F6E provider.api_key_env \u5BF9\u5E94\u7684\u73AF\u5883\u53D8\u91CF"] : [],
-      ...authMode === "apikey" ? ["\u6309\u4F9B\u5E94\u5546\u5B9E\u9645\u503C\u4FEE\u6539 active_profile \u548C models.<profile>.model\uFF0C\u6A21\u578B ID \u4E0D\u8981\u6C42\u4F7F\u7528\u6807\u51C6\u540D\u79F0"] : [],
+      ...authMode === "apikey" ? ["\u6309\u4F9B\u5E94\u5546\u5B9E\u9645\u503C\u4FEE\u6539 active_profile \u548C models.<profile>.model\uFF0C\u6A21\u578B ID \u4E0D\u8981\u6C42\u4F7F\u7528\u6807\u51C6\u540D\u79F0\uFF1B\u624B\u52A8\u66F4\u6362\u6A21\u578B\u65F6\uFF0C\u79FB\u9664\u6A21\u677F\u7684 limits \u6216\u66FF\u6362\u4E3A\u8BE5\u6A21\u578B\u5DF2\u6838\u5B9E\u7684\u9650\u5236"] : [],
       "\u65B0\u914D\u7F6E\u9ED8\u8BA4\u542F\u7528 native-alpha\uFF1B\u5982\u679C\u4FDD\u7559\u65E7\u914D\u7F6E\uFF0C\u8BF7\u5728 inspect_image_config \u7684\u63D0\u793A\u4E0B\u663E\u5F0F\u66F4\u65B0\u900F\u660E\u7B56\u7565",
       "\u786E\u8BA4 transparency.native.model_ids \u53EA\u662F\u80FD\u529B\u58F0\u660E\uFF1B\u4E0D\u786E\u5B9A\u65F6\u53EF\u7559\u7A7A\u6570\u7EC4",
       "\u8C03\u7528 inspect_image_config \u68C0\u67E5\u6709\u6548\u914D\u7F6E\uFF0C\u7136\u540E\u91CD\u65B0\u7ED1\u5B9A\u9879\u76EE"
@@ -35103,6 +35210,17 @@ function mergeConfigChanges(current, changes) {
     }
     if (!isRecord2(value)) throw new ImageConfigManagementError("image_config_update_invalid");
     result[key] = mergeRecords(result[key], value);
+    if (key === "models") {
+      for (const [profileId, profileChanges] of Object.entries(value)) {
+        const previous = current.models?.[profileId];
+        if (!isRecord2(previous) || !isRecord2(profileChanges) || !Object.hasOwn(profileChanges, "model") || profileChanges.model === previous.model) continue;
+        if (Object.hasOwn(profileChanges, "limits")) {
+          result[key][profileId].limits = structuredClone(profileChanges.limits);
+        } else {
+          delete result[key][profileId].limits;
+        }
+      }
+    }
   }
   return result;
 }
@@ -35192,7 +35310,7 @@ function validateApiConfig(config2) {
     validateTransparency(model.transparency);
     if (model.parameters !== void 0 && (!isRecord2(model.parameters) || Object.keys(model.parameters).some((key) => model_profile_contract_default.reservedParameterKeys.includes(key)))) throw invalidImageConfigError();
     validateParameterFields(model.parameter_fields, model.parameters);
-    if (model.limits !== void 0 && (!isRecord2(model.limits) || unknownKeys(model.limits, /* @__PURE__ */ new Set(["max_input_images"])).length || model.limits.max_input_images !== void 0 && (!Number.isInteger(model.limits.max_input_images) || model.limits.max_input_images < 1))) throw invalidImageConfigError();
+    if (model.limits !== void 0 && !validModelLimits(model.limits, config2.providers[providerId].protocol)) throw invalidImageConfigError();
   }
   validateModelAliases(config2.models);
 }
@@ -35330,7 +35448,7 @@ function validateDefaults(value, allowedKeys, errorCode) {
     if (value.quality !== void 0 && !model_profile_contract_default.qualityValues.includes(value.quality)) throw configError(errorCode);
     if (value.output_format !== void 0 && !model_profile_contract_default.formatValues.includes(value.output_format)) throw configError(errorCode);
   }
-  if (value.size !== void 0 && (typeof value.size !== "string" || !/^\d+x\d+$/.test(value.size))) {
+  if (value.size !== void 0 && (typeof value.size !== "string" || !/^(auto|\d+x\d+)$/.test(value.size))) {
     throw configError(errorCode);
   }
   if (value.quality !== void 0 && (typeof value.quality !== "string" || !value.quality.trim())) {
@@ -36440,6 +36558,7 @@ async function prepareImport(input, context, { importer, editSubmissions, readAr
     }
     if (claimed?.receipt.modelSelection?.authMode === "apikey") throw requestError();
     const parent = await readArtifact(input.parentImageId, context);
+    if (["image/gif", "image/svg+xml"].includes(parent.metadata.mimeType)) throw requestError();
     preparationStarted = true;
     const structuredContent = await importer.prepare({
       ...input,
@@ -36556,6 +36675,7 @@ var imageModelCapabilitiesOutputSchema = external_exports2.object({
   generate: external_exports2.boolean().optional(),
   edit: external_exports2.boolean().optional(),
   mask: external_exports2.boolean().optional(),
+  markup: external_exports2.boolean().optional(),
   multi_reference: external_exports2.boolean().optional()
 }).strict();
 var imageModelOutputSchema = external_exports2.object({
@@ -36577,7 +36697,7 @@ var imageModelOutputSchema = external_exports2.object({
     aspect_ratio: external_exports2.string().optional(),
     resolution: external_exports2.string().optional()
   }).strict().optional(),
-  limits: external_exports2.object({ quality: external_exports2.array(external_exports2.string()).optional(), max_input_images: external_exports2.number().int().positive().optional() }).strict().optional(),
+  limits: modelLimitsSchema.extend({ quality: external_exports2.array(external_exports2.string()).optional() }).optional(),
   availability: external_exports2.enum(["configured", "missing_credentials"]).optional(),
   selectionFingerprint: external_exports2.string().regex(/^[a-f0-9]{64}$/).optional(),
   parameterFields: external_exports2.record(external_exports2.unknown()).optional(),
@@ -36642,6 +36762,7 @@ var annotationOutputSchema = external_exports2.object({
   itemCount: external_exports2.number().int().min(1).max(100),
   previewMimeType: external_exports2.literal("image/svg+xml"),
   hasMask: external_exports2.boolean(),
+  hasMarkup: external_exports2.boolean().optional(),
   maskMimeType: external_exports2.literal("image/png").nullable(),
   maskPolicy: maskPolicyOutputSchema.nullable()
 }).strict();
@@ -36800,7 +36921,7 @@ function createImagegenServer({
     name: "image-result",
     uri: resultWidgetUri,
     title: "Image results",
-    description: "Keep images visible in the conversation result and provide an entry point to the focused canvas in the same host instance.",
+    description: "Keep images visible in the conversation result; editable formats provide an entry point to the focused canvas in the same host instance.",
     releaseIdentity,
     readWidgetHtml
   });
@@ -36816,7 +36937,7 @@ function createImagegenServer({
     name: "image-result-legacy-stable",
     uri: `ui://${releaseIdentity.pluginId}/result.html`,
     title: "Image results",
-    description: "Keep images visible in the conversation result and provide an entry point to the focused canvas in the same host instance.",
+    description: "Keep images visible in the conversation result; editable formats provide an entry point to the focused canvas in the same host instance.",
     releaseIdentity,
     readWidgetHtml
   });
@@ -36833,7 +36954,7 @@ function createImagegenServer({
       name: `image-result-legacy-${fingerprint}`,
       uri: `ui://${releaseIdentity.pluginId}/result-${fingerprint}.html`,
       title: "Image results",
-      description: "Keep images visible in the conversation result and provide an entry point to the focused canvas in the same host instance.",
+      description: "Keep images visible in the conversation result; editable formats provide an entry point to the focused canvas in the same host instance.",
       releaseIdentity,
       readWidgetHtml
     });
@@ -37159,6 +37280,9 @@ function createImagegenServer({
           }
         }
         let taskOutput = output;
+        if (annotation?.markupPath && !modelHasCapability(context, modelProfileId, "markup")) {
+          return toolError(new Error("\u5F53\u524D\u6A21\u578B\u672A\u58F0\u660E\u539F\u751F\u6807\u6CE8\u7F16\u8F91\u80FD\u529B"), "unsupported_capability");
+        }
         const useDedicatedMask = Boolean(
           annotation?.maskPath && modelHasCapability(context, modelProfileId, "mask")
         );
@@ -37200,6 +37324,7 @@ function createImagegenServer({
             annotationId,
             ...claimedSubmission ? { submissionId: claimedSubmission.receipt.id } : {},
             ...useDedicatedMask ? { mask: annotation.maskPath, maskPolicy: annotation.maskPolicy } : {},
+            ...annotation?.markupPath && modelHasCapability(context, modelProfileId, "markup") ? { markup: true } : {},
             ...transparency ? { transparency } : {},
             output: taskOutput
           },
@@ -37381,7 +37506,7 @@ function createImagegenServer({
     "read_image_artifact_data",
     {
       title: "Read image artifact data",
-      description: "Read image pixel data by stable image ID for the image workspace. This tool is visible only to the app/widget.",
+      description: "Read image bytes by stable image ID for the image workspace. This tool is visible only to the app/widget.",
       inputSchema: { ...projectBindingInputSchema, imageId: imageIdSchema },
       outputSchema: external_exports2.object({
         artifact: imageArtifactOutputSchema,
@@ -37463,7 +37588,7 @@ function createImagegenServer({
     "render_image_results",
     {
       title: "Render image results",
-      description: "Display an explicitly selected set of up to 10 images in order, with independent canvas entries. Collect results across operations for final delivery; intermediate previews may be included again in the final set using the same IDs. Do not omit a required image because it was shown earlier, or repeat an already complete final set. This tool does not infer task completeness or select versions for you.",
+      description: "Display an explicitly selected set of up to 10 images in order. PNG/JPEG/WebP have independent canvas entries; GIF/SVG support preview and original export only. Collect results across operations for final delivery; intermediate previews may be included again in the final set using the same IDs. Do not omit a required image because it was shown earlier, or repeat an already complete final set. This tool does not infer task completeness or select versions for you.",
       inputSchema: { ...projectBindingInputSchema, imageIds: external_exports2.array(imageIdSchema).min(1).max(10) },
       outputSchema: external_exports2.object({
         imageIds: external_exports2.array(imageIdSchema).min(1).max(10),
@@ -37551,6 +37676,9 @@ function createImagegenServer({
         return toolError(error40, "artifact_not_found");
       }
       try {
+        if (["image/gif", "image/svg+xml"].includes(artifact.metadata.mimeType)) {
+          return toolError(new Error("GIF/SVG \u652F\u6301\u9884\u89C8\u548C\u539F\u6837\u5BFC\u51FA\uFF0C\u4E0D\u652F\u6301\u753B\u5E03\u7F16\u8F91"), "unsupported_capability");
+        }
         const editorSession = await editorState.open({
           artifactRoot: context.artifactRoot,
           bindingKey: context.bindingKey,
@@ -37618,6 +37746,7 @@ function createImagegenServer({
         parentImageId: imageIdSchema,
         items: external_exports2.array(annotationItemSchema).max(100),
         sourcePrompt: external_exports2.string().max(600),
+        markupPngBase64: external_exports2.string().min(1).max(7e7).optional(),
         modelSelection: modelSelectionSchema.optional()
       },
       outputSchema: external_exports2.object({
@@ -37627,7 +37756,7 @@ function createImagegenServer({
       annotations: writeAnnotations2(),
       _meta: { ui: { visibility: ["app"] } }
     },
-    async ({ projectBindingId, parentImageId, items, sourcePrompt, modelSelection }) => await withBoundProject(
+    async ({ projectBindingId, parentImageId, items, sourcePrompt, modelSelection, markupPngBase64 }) => await withBoundProject(
       projectContext,
       projectBindingId,
       async (context) => {
@@ -37644,10 +37773,13 @@ function createImagegenServer({
         } catch (error40) {
           return toolError(error40, "artifact_not_found");
         }
+        if (markupPngBase64 && (modelSelection?.authMode !== "apikey" || !modelHasCapability(context, modelSelection.modelProfileId, "markup") || !items.length || items.some((item) => item.type === "mask"))) {
+          return toolError(new Error("\u5F53\u524D\u6A21\u578B\u6216\u6807\u6CE8\u4E0D\u652F\u6301\u539F\u751F markup"), "unsupported_capability");
+        }
         let annotation = null;
         if (items.length) {
           try {
-            annotation = await saveAnnotations({ imageId: parentImageId, items }, context);
+            annotation = await saveAnnotations({ imageId: parentImageId, items, ...markupPngBase64 ? { markupPngBase64 } : {} }, context);
           } catch (error40) {
             return toolError(error40, "annotation_save_failed");
           }
@@ -37897,7 +38029,7 @@ function modelHasCapability(context, modelProfileId, capability) {
   const runtimeConfig = context.apiRuntimeConfig ?? JSON.parse(context.effectiveConfigJson);
   const model = runtimeConfig?.models?.[modelProfileId];
   const protocol = runtimeConfig?.providers?.[model?.provider]?.protocol;
-  if (capability === "mask" && protocol && protocol !== "openai-compatible") return false;
+  if (["mask", "markup"].includes(capability) && protocol && protocol !== "openai-compatible") return false;
   return runtimeConfig?.models?.[modelProfileId]?.capabilities?.[capability] === true;
 }
 function apiProviderNotConfigured() {
@@ -37954,6 +38086,9 @@ async function optionalProjectContext(projectContext, projectBindingId) {
   return await projectContext.require(projectBindingId);
 }
 function imageContent2(artifact) {
+  if (["image/gif", "image/svg+xml"].includes(artifact.metadata.mimeType)) {
+    return { type: "text", text: `${artifact.metadata.id}\uFF08${artifact.metadata.mimeType}\uFF09\uFF1A\u8BF7\u901A\u8FC7\u7ED3\u679C\u5361\u9884\u89C8\u6216\u5BFC\u51FA\u539F\u6587\u4EF6\u3002` };
+  }
   return { type: "image", data: artifact.data, mimeType: artifact.metadata.mimeType };
 }
 function imageArtifactMetadata(metadata) {

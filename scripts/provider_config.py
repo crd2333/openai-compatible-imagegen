@@ -10,6 +10,7 @@ from image_transparency import TransparencyPolicy, resolve_policy as resolve_tra
 from model_profiles import CONTRACT, model_selection_fingerprint, normalize_alias, validate_image_defaults, validate_model_profiles
 from native_image_protocols import NATIVE_PROTOCOLS
 from image_parameters import resolve_parameter_defaults
+from image_size_limits import validate_model_limits
 
 
 DEFAULT_MODEL = "gpt-image-2"
@@ -25,6 +26,7 @@ MODEL_CAPABILITY_KEYS = (
     "generate",
     "edit",
     "mask",
+    "markup",
     "multi_reference",
 )
 PLACEHOLDER_API_KEYS = {
@@ -188,6 +190,8 @@ def list_model_profiles(raw: dict[str, Any]) -> list[dict[str, Any]]:
         effective = {key: capabilities.get(key, False) for key in MODEL_CAPABILITY_KEYS}
         if cfg.protocol == "atlas":
             effective.update(edit=False, mask=False, multi_reference=False)
+        if cfg.protocol != "openai-compatible":
+            effective["markup"] = False
         limits = dict(cfg.limits)
         if cfg.protocol in NATIVE_PROTOCOLS:
             effective["mask"] = False
@@ -210,6 +214,10 @@ def list_model_profiles(raw: dict[str, Any]) -> list[dict[str, Any]]:
 
 def _parse_standalone_config(raw: dict[str, Any], *, require_api_key: bool) -> EffectiveImageConfig:
     protocol = resolve_provider_protocol(raw.get("protocol", "openai-compatible"))
+    try:
+        validate_model_limits(raw.get("limits", {}), protocol)
+    except ValueError as exc:
+        raise ProviderConfigError(str(exc)) from exc
     base_url = str(raw.get("base_url") or "").strip().rstrip("/")
     file_api_key = str(raw.get("api_key") or "").strip()
     api_key_env = str(raw.get("api_key_env") or "").strip()
@@ -244,6 +252,7 @@ def _parse_standalone_config(raw: dict[str, Any], *, require_api_key: bool) -> E
         user_agent=resolve_user_agent(raw.get("user_agent")),
         url_download=resolve_url_download_config(raw.get("url_download")),
         proxy=resolve_proxy_config(raw.get("proxy")),
+        limits=dict(raw.get("limits", {})),
     )
 
 

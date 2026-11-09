@@ -10,12 +10,13 @@ Use `imagegen.py <command> --help` for the complete flag list.
 | `-f`, `--file` | Output file |
 | `-i`, `--image` | Edit reference image; repeat for multiple inputs |
 | `-m`, `--mask` | Edit mask |
+| `--markup` | Separate transparent PNG annotation layer; requires `capabilities.markup: true`, matches the first edit image, and conflicts with `--mask` and `prompt_rewriter` |
 | `--profile` | Model profile selection |
 | `--parameters` | Native JSON parameter object |
 | `--size`, `--aspect`, `--resolution` | API output dimensions |
 | `--quality` | Provider quality value |
 | `--n` | Requested image count, 1–16 |
-| `--format` | `png`, `jpeg`, or `webp` |
+| `--format` | `png`, `jpeg`, `webp`; OpenAI-compatible generation also accepts `gif` and static `svg` |
 | `--timeout` | Request timeout in seconds |
 | `--concurrency` | Batch worker limit |
 
@@ -48,6 +49,8 @@ This is the runtime order after the agent has interpreted the request and constr
 The generation and edit endpoints above assume `protocol=openai-compatible` and a base URL ending in `/v1`; complete overrides and other protocols follow [model configuration](models.md). With `protocol=atlas`, generation submits to `POST /api/v1/model/generateImage` and polls `GET /api/v1/model/prediction/{request_id}`. Atlas supports PNG or JPEG text-to-image output; edits and `native-alpha` are rejected before submission. Polling does not resubmit the generation request. For `n>1`, Atlas submits one request per candidate and collects the complete group before publication; a candidate request failure prevents group publication.
 
 ## Size Guidance
+
+Separate API generation dimensions from final local delivery dimensions. Before choosing a custom API size, inspect the selected model's [declared output limits](models.md#output-size-limits). Reference-image dimensions and empty limits do not establish API support. Preserve explicit user intent; the runtime rejects declared violations before transport without resizing or retrying. The presets below express requested dimensions, not a promise that every provider supports them.
 
 The pixel preset table below applies to OpenAI-compatible and Atlas. Native xAI/Gemini protocols use the common fields supported by their adapters; see [model configuration](models.md).
 
@@ -94,6 +97,8 @@ The API background and native-alpha controls below apply to OpenAI-compatible. A
 Ordinary API requests omit `background` by default. Pass `auto` or `opaque` only when the user explicitly requests that API option. If an explicit background option is rejected, explain the failure and ask before submitting a new request without it; do not infer parameter rejection from a timeout or an ambiguous error. The configured, limited retry for native transparency remains unchanged.
 
 `--transparent` marks a transparent delivery intent and forces PNG. The runtime sends `background="transparent"` only when the resolved route is `native-alpha`; local routes keep the parameter out of the API request. `--background` accepts only `auto` or `opaque`; the former transparent value was removed.
+
+An explicit GIF/SVG format conflicts with `--transparent` or `--asset` and is rejected before submission. GIF/SVG originals are preserved for preview and export, not raster editing, local transforms, or pixel QA. See [model configuration](models.md#gpt-image-26-gif-svg-and-markup) for provider-specific requirements.
 
 An explicit `--file` extension must match the resolved output format. For example, a transparent or `--asset` request cannot target a `.jpeg` path because those intents resolve to PNG.
 
@@ -188,7 +193,7 @@ Real alpha pixels depend on the returned image. Use `inspect-image --expect-tran
 
 For chroma matting, `outer_tolerance` must be greater than `inner_tolerance`. The default `background_scope=edge-connected` protects matching colors enclosed by the subject. Select `global` only when enclosed key-color background areas must also become transparent. Extraction values never change the independent residual-contamination threshold. For emissive alpha, `white_point` must be greater than `black_point`. For masks, `matte=black|white` enables source-matte removal and defringing only when that matte color is known. Mask matte cleanup modifies partial-alpha edge colors and preserves foreground pixels whose trusted mask value remains fully opaque. Batch rows can provide the same values in a `transparency_options` object.
 
-One request accepts `n=1..16`. JSON responses are limited to 96 MiB, each decoded or downloaded image to 64 MiB, the cumulative decoded response to 256 MiB, and processing to 64 response items. Items publish sequentially, so later resource failures preserve earlier originals. Original-response publication accepts standard PNG color types, valid bit depths, and Adam7 interlacing after structural, chunk-order, CRC, dimension, encoding, compressed-stream, and 4096-`IDAT`-chunk-limit checks. Full scanline, filter, and Adam7 pass validation runs through 96 MiB of expected decompressed scanlines. A bounded exact-length pass covers 96-512 MiB; larger inputs return `api_response_item_resource_limited`. Corrupt, incomplete, or excessively fragmented IDAT data is rejected. Local deep inspection and transforms support non-interlaced 8-bit or 16-bit RGB/RGBA PNG files up to 25 million pixels and a 256 MiB PNG file limit. API generation can also return JPEG or WebP; complete VP8L entropy streams are validated, while deep local QA still reports JPEG and WebP as unsupported.
+One request accepts `n=1..16`, except SVG generation which requires `n=1`. JSON responses are limited to 96 MiB, each decoded or downloaded image to 64 MiB, the cumulative decoded response to 256 MiB, and processing to 64 response items. Items publish sequentially, so later resource failures preserve earlier originals. Original-response publication accepts standard PNG color types, valid bit depths, and Adam7 interlacing after structural, chunk-order, CRC, dimension, encoding, compressed-stream, and 4096-`IDAT`-chunk-limit checks. Full scanline, filter, and Adam7 pass validation runs through 96 MiB of expected decompressed scanlines. A bounded exact-length pass covers 96-512 MiB; larger inputs return `api_response_item_resource_limited`. Corrupt, incomplete, or excessively fragmented IDAT data is rejected. Local deep inspection and transforms support non-interlaced 8-bit or 16-bit RGB/RGBA PNG files up to 25 million pixels and a 256 MiB PNG file limit. OpenAI-compatible generation also accepts GIF and static SVG with the [format-specific restrictions](models.md#gpt-image-26-gif-svg-and-markup). API generation can also return JPEG or WebP; complete VP8L entropy streams are validated, while deep local QA still reports JPEG and WebP as unsupported.
 
 ## Batch Concurrency
 
@@ -209,7 +214,7 @@ High concurrency can trigger rate limits, failures, or unexpected cost.
 | `size`, `aspect`, `resolution` | API output dimensions |
 | `quality`, `n`, `format`, `background` | API request options; background is `auto` or `opaque` |
 | `transparent`, `asset` | Explicit output intentions |
-| `images`, `mask` | Edit inputs |
+| `images`, `mask`, `markup` | Edit inputs; `markup` is a separate transparent PNG and cannot be combined with `mask` |
 | `model`, `modelProfileId`, `timeout` | Per-task model/profile and timeout overrides |
 | `parameters` | Native JSON parameter object |
 | `qa`, `components` | Optional deterministic QA |
@@ -226,14 +231,14 @@ Relative paths have separate, deterministic bases:
 
 | Field | Relative to |
 | --- | --- |
-| `images`, `mask`, `transparency_mask` in a JSONL task | JSONL file directory |
+| `images`, `mask`, `markup`, `transparency_mask` in a JSONL task | JSONL file directory |
 | `file`, `out`, `postprocess_out_dir` in a task or shared command value | batch `--out` directory |
 
 Absolute paths are preserved. Validation, API requests, post-processing, and the manifest use the same normalized values. The batch manifest records `output_root` and `path_contract`, checks every declared file path, and reports a failed file-existence check instead of claiming a complete delivery. API multi-image originals publish independently; global QA requirements apply to the complete derivative set.
 
 ## API Errors and References
 
-An HTTP 4xx response is an API rejection (`error_kind=api_rejected`) and is not a transparency QA result. It means no image was delivered, and batch records carry `delivery_ready=false`. Reference-image edits may include technical file metadata and `reference_semantics_not_evaluated`; unusual dimensions or screenshot-like content are reported, not automatically blocked.
+An HTTP error means no usable image response was returned; it does not establish whether the provider generated or billed an image. An HTTP 4xx response is an API rejection (`error_kind=api_rejected`) and is not a transparency QA result. It means no image was delivered, and batch records carry `delivery_ready=false`. Reference-image edits may include technical file metadata and `reference_semantics_not_evaluated`; unusual dimensions or screenshot-like content are reported, not automatically blocked.
 
 ## Output
 

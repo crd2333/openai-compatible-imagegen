@@ -73,7 +73,7 @@ v2 的 API 透明策略位于 `models[profileId].transparency`。顶层 `transpa
 
 v2 顶层 `defaults` 只含超时与并发。图片参数放在每个模型的 `defaults`，宿主与本地输出偏好放在 `host_defaults`。原生协议只接收其实现的通用字段：xAI 使用比例、分辨率与质量；Gemini Interactions 使用比例、分辨率与格式；generateContent 使用比例与分辨率。需要精确像素尺寸时，对受支持的 PNG 使用独立本地交付选项；本地交付不提供 JPEG、WebP 转码。
 
-通用单次请求通过 Plugin 的 `size`、`aspectRatio`、`resolution`、`quality`、`format` 或 Standalone 的对应 CLI 参数传入。同一优先级不能同时指定 `size` 与比例/分辨率。更高优先级的尺寸表达会替换较低优先级的另一种表达。v2 不为将来的模型维护质量、比例或分辨率值白名单；实际可用值由所选服务决定。v1 与 Atlas 保留既有质量校验，输出文件格式仍限于 PNG、JPEG、WebP。
+通用单次请求通过 Plugin 的 `size`、`aspectRatio`、`resolution`、`quality`、`format` 或 Standalone 的对应 CLI 参数传入。同一优先级不能同时指定 `size` 与比例/分辨率。更高优先级的尺寸表达会替换较低优先级的另一种表达。v2 不为将来的模型维护质量、比例或分辨率值白名单；实际可用值由所选服务决定。v1 与 Atlas 保留既有质量校验，OpenAI-compatible 生成还支持 GIF 和静态 SVG，限制见下文。
 
 原生扩展字段放入模型的 `parameters`，单次请求的 `parameters` 覆盖配置中的对应字段。嵌套对象按字段合并；模型、提示词、图像输入、数量、认证与路由字段不能借此替换。通用请求中已确定的字段优先。不要把密钥放在参数中。
 
@@ -98,6 +98,40 @@ v2 顶层 `defaults` 只含超时与并发。图片参数放在每个模型的 `
 
 `capabilities` 表达该 profile 的用途，`limits.max_input_images` 可限制父图与参考图的总数。协议实现仍限制真实能力：Atlas 无编辑能力，xAI 与 Gemini 当前没有专用 mask 参数。普通区域标注可以继续用于语义编辑，不能据此承诺严格像素边界。
 
+## 输出尺寸限制
+
+生成参数 `size` 是向 API 请求的画布尺寸，本地交付参数 `deliverySize` 是最终 PNG 的画布尺寸，两者可以不同。参考图的尺寸不能证明 API 支持同样尺寸。
+
+OpenAI-compatible 和 Atlas 的 v1、v2 模型配置可声明可选的 `limits.output_size`。将其加入 `models` 下对应模型的条目；Standalone 旧式平铺配置使用顶层 `limits`。例如：
+
+```json
+{
+  "limits": {
+    "output_size": { "multiple_of": 16, "max_aspect_ratio": 3 }
+  }
+}
+```
+
+新建 API 配置模板及 GPT Image 2 示例包含这两项约束，依据是 OpenAI 的[生成接口](https://developers.openai.com/api/reference/resources/images/methods/generate)和[编辑接口](https://developers.openai.com/api/reference/resources/images/methods/edit)契约。用于其他模型或渠道前须核实对应服务的要求；这项声明不涵盖服务的所有限制。
+
+| 字段 | 含义 |
+| --- | --- |
+| `allowed_sizes` | 非空的 `宽x高` 字符串列表，横竖方向分别匹配 |
+| `multiple_of` | 宽、高均须为该正整数的倍数 |
+| `max_aspect_ratio` | 长边除以短边的最大值，须为不小于 1 的有限数；`3` 允许 1:3 至 3:1 |
+| `min_edge`、`max_edge` | 每条边的像素上下限，包含边界值 |
+| `min_pixels`、`max_pixels` | 宽乘高的像素总量上下限，包含边界值 |
+
+所有已声明条件同时生效。边长、像素量和整除步长须为正整数，下限不能高于上限；允许尺寸列表也须满足同时声明的其他条件。这些限制针对像素 `size`，不用于 xAI/Gemini 原生比例与分辨率字段，也不控制 ChatGPT 宿主生图。项目配置不能覆盖模型限制。
+
+Plugin 的 `list_image_models` 和 Standalone 的 `list-models` 会返回已声明限制；平铺 Standalone 配置可用 `info` 查看。缺少或留空表示未知，不表示无限制；配置默认尺寸也不代表服务已验证支持它。既有配置不会自动改写，仍可读取。若要为已有模型启用检查，请在用户配置或 Standalone 的 `auth.json` 中为该模型补充已核实的限制；Plugin 修改后重新绑定项目。不要自动将一个模型的限制复制给另一个模型。
+
+通过 `update_image_config` 更改 profile 的 `model` 时，工具会移除旧模型的限制；更新中显式提供的 `limits` 会完整替换旧声明。手动编辑配置文件更换模型时，也应移除旧限制或换成新模型已核实的限制。旧式 Standalone 的 `size="auto"` 仍交给服务决定尺寸；未指定具体宽高时，无法在本地检查像素限制。
+
+默认值与显式参数合并后，违规尺寸会在发送图片请求前被拒绝，不会自动改尺寸、重试或切换供应商。例如 `3072x704` 的长短边比约为 4.36:1，会违反已声明的最大值 `3`。Plugin 任务条目返回 `image_size_unsupported`，并说明失败尺寸、约束及限制值；同一批次的其他独立条目可继续。通过本地检查只说明满足已声明条件，服务仍会检查其当前要求。
+
+最终尺寸超出模型支持的形状时，先选择受支持的生成画布，再单独规划本地交付。显式使用 `fit: "contain"` 可等比缩放并留白；默认的 `stretch` 在比例不同时会拉伸。若要求铺满且不变形，需要明确裁剪或构图方案；本地交付没有裁剪模式。原图始终保留不变。
+
 ## 本次选择与草稿
 
 在聊天中说明模型或别名。Plugin 的 `list_image_models` 返回全部已配置 profile、供应商、显示名称、别名、有效能力、默认值及参数字段，不会发送图片请求或探测模型在线状态。匹配顺序是精确 profile ID、唯一别名、唯一实际模型 ID。同名模型有多个渠道时需明确选择。
@@ -111,3 +145,121 @@ v2 顶层 `defaults` 只含超时与并发。图片参数放在每个模型的 `
 Standalone 可运行 `imagegen.py list-models` 查看目录，使用 `--profile` 指定 profile 或唯一别名，使用 `--parameters '{"seed":7}'` 传入单次扩展参数。JSONL 行可设置 `modelProfileId` 和 `parameters`，各行独立选模。
 
 配置升级参见[迁移](./migration.zh-CN.md)。生成与编辑后仍需按[图片任务](./image-jobs.zh-CN.md)查询所有结果、保留原图，并展示用户需要的完整交付集合。
+
+## GPT Image 2.6：GIF、SVG 与原生标注
+
+下面的 API 配置示例声明 `gpt-image-2.6-sunburst` 和 `gpt-image-2.6-flare`。将所需 provider 和 profile 合入现有配置，保留其他模型和 Plugin 的 `auth_mode` 等设置；Standalone 在自己的 `auth.json` 中使用同一结构。配置不会改变 ChatGPT 内置路线使用的模型，服务也必须实际开放对应型号。
+
+```json
+{
+  "config_version": 2,
+  "active_profile": "openai/flare",
+  "providers": {
+    "openai": {
+      "protocol": "openai-compatible",
+      "base_url": "https://api.openai.com/v1",
+      "api_key_env": "OPENAI_API_KEY"
+    }
+  },
+  "models": {
+    "openai/sunburst": {
+      "provider": "openai",
+      "model": "gpt-image-2.6-sunburst",
+      "capabilities": {
+        "generate": true,
+        "edit": true,
+        "mask": true,
+        "markup": true,
+        "multi_reference": true
+      },
+      "defaults": {
+        "size": "auto",
+        "quality": "medium",
+        "output_format": "png"
+      },
+      "parameters": {
+        "complexity": "high"
+      },
+      "parameter_fields": {
+        "complexity": {
+          "title": "复杂度",
+          "type": "string",
+          "path": [
+            "complexity"
+          ],
+          "enum": [
+            "low",
+            "medium",
+            "high"
+          ]
+        }
+      }
+    },
+    "openai/flare": {
+      "provider": "openai",
+      "model": "gpt-image-2.6-flare",
+      "capabilities": {
+        "generate": true,
+        "edit": true,
+        "mask": true,
+        "markup": true,
+        "multi_reference": true
+      },
+      "defaults": {
+        "size": "auto",
+        "quality": "medium",
+        "output_format": "png"
+      },
+      "parameters": {
+        "complexity": "high"
+      },
+      "parameter_fields": {
+        "complexity": {
+          "title": "复杂度",
+          "type": "string",
+          "path": [
+            "complexity"
+          ],
+          "enum": [
+            "low",
+            "medium",
+            "high"
+          ]
+        }
+      }
+    }
+  }
+}
+```
+
+`complexity` 控制绘制前的规划程度，与 `quality` 分开，可选 `low`、`medium`、`high`。单次请求可通过 `parameters` 覆盖，画布也会显示对应控件。
+
+- **GIF 动画：**仅支持生成。使用 `format: "gif"`、`size: "auto"`，可传 `parameters: {"frame_count": 9, "frame_duration_ms": 200}`。本地校验接受 2–64 帧、每帧 20–2000 毫秒，这不代表服务均支持该范围：OpenAI 生成指南与接口参考当前列出的 GIF 上限不同，接口参考还注明需要预览权限。选择参数前请确认所选服务的实际限制。显式宽高须为正整数且是 16 的倍数；服务仍会检查帧尺寸和请求总像素限制。
+- **SVG 矢量图：**仅支持生成，每次服务请求一张，Standalone 使用 `--n 1`。原始 UTF-8 XML 会被完整保存；支持形状、文字、渐变、基本样式和文档内引用，拒绝脚本、外部资源、嵌入位图、动画和不支持的元素。
+- **SVG 编写模型：**官方接口在账号开放 SVG 模型选择时要求 `svg.model`，未开放时必须省略 `svg` 对象。顶层图像模型生成参考图，`svg.model` 指定编写矢量内容的模型。确认服务支持的具体型号后，通过 `parameters.svg.model` 传入；Standalone 使用 `--parameters` 中的同一嵌套字段。可选的 `svg.reasoning.effort` 与图像 `complexity` 独立。如果服务提示缺少 `svg.model`，请先向供应商确认可用的 SVG 编写模型，再提交新请求。参见[官方接口参考](https://developers.openai.com/api/reference/resources/images/methods/generate)，并核对服务返回的具体错误。
+- **原文件交付：**两种格式均保留原始字节，可在结果卡预览并导出同扩展名的 `.gif`、`.svg` 文件；不支持位图编辑、缩放、切图和透明处理。它们也不支持流式输出、部分图片、压缩参数及 `prompt_rewriter`。
+- **原生标注：**声明 `capabilities.markup: true` 后，API 画布将普通标注单独绘制为透明 PNG，再作为 `markup` 上传。首张输入仍是干净原图，附加图片仍作为参考。含蒙版的标注继续使用原有蒙版流程；`markup` 不能与 `mask` 或 `prompt_rewriter` 同时使用。标注层必须与首张图等大、含透明像素、不超过 50 MB，且像素总数不超过 16,777,216。
+
+配置 profile 后，Standalone 可执行：
+
+Windows PowerShell，在安装目录之外的图片项目目录中运行：
+
+```powershell
+$SkillDir = "C:/path/to/openai-compatible-imagegen"
+python "$SkillDir/scripts/imagegen.py" generate --profile openai/flare --prompt "灯笼轻轻摇晃，无缝循环" --format gif --size auto --file output/lantern.gif
+python "$SkillDir/scripts/imagegen.py" generate --profile openai/sunburst --prompt "简洁的树叶矢量标志" --format svg --n 1 --file output/leaf.svg
+python "$SkillDir/scripts/imagegen.py" edit --profile openai/flare --prompt "把圈内花瓶改成蓝色，并移除标注" --image kitchen.png --markup markup.png --file output/kitchen-blue.png
+```
+
+macOS 或 Linux shell，在安装目录之外的图片项目目录中运行：
+
+```bash
+SkillDir="/absolute/path/to/openai-compatible-imagegen"
+python3 "$SkillDir/scripts/imagegen.py" generate --profile openai/flare --prompt "灯笼轻轻摇晃，无缝循环" --format gif --size auto --file output/lantern.gif
+python3 "$SkillDir/scripts/imagegen.py" generate --profile openai/sunburst --prompt "简洁的树叶矢量标志" --format svg --n 1 --file output/leaf.svg
+python3 "$SkillDir/scripts/imagegen.py" edit --profile openai/flare --prompt "把圈内花瓶改成蓝色，并移除标注" --image kitchen.png --markup markup.png --file output/kitchen-blue.png
+```
+
+SVG 示例适用于服务不要求显式选择编写模型的情况；否则先在所选 profile 配置 `parameters.svg.model`。编辑示例需要已有的 `kitchen.png` 及尺寸匹配的透明标注文件 `markup.png`。
+
+动画和复杂度参数通过 `--parameters` 的 JSON 对象传入；Plugin 使用工具的 `parameters` 对象。未声明 `markup` 的既有模型保留原来的语义标注行为。账号权限与格式开放情况取决于配置的服务。契约见 [OpenAI 官方图像指南](https://developers.openai.com/api/docs/guides/image-generation)。

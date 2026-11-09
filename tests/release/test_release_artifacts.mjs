@@ -47,6 +47,7 @@ const sharedCoreFiles = [
   "image_parameters.py",
   "image_provider_requests.py",
   "image_request_options.py",
+  "image_size_limits.py",
   "model-profile-contract.json",
   "model_profiles.py",
   "native_image_protocols.py",
@@ -65,6 +66,8 @@ const sharedCoreFiles = [
   "image_qa.py",
   "image_resize.py",
   "image_response.py",
+  "image_extended_formats.py",
+  "image_markup.py",
   "image_transaction.py",
   "image_transparency.py",
   "image_transport.py",
@@ -315,18 +318,18 @@ test("release mode rejects baseline metadata and publishes clean artifacts for t
 });
 
 
-test("the release source builds the current v1.6.0 artifact set", async (t) => {
+test("the release source builds the current v1.7.0 artifact set", async (t) => {
   const outputDirectory = await mkdtemp(path.join(os.tmpdir(), "imagegen-release-candidate-"));
   t.after(() => rm(outputDirectory, { recursive: true, force: true }));
 
   const result = await runBuild(outputDirectory);
 
-  assert.equal(result.version, "1.6.0");
+  assert.equal(result.version, "1.7.0");
   assert.deepEqual(result.files, [
     "SHA256SUMS",
-    "openai-compatible-imagegen-codex-plugin-1.6.0.zip",
-    "openai-compatible-imagegen-shared-python-sha256-1.6.0.json",
-    "openai-compatible-imagegen-skill-1.6.0.zip",
+    "openai-compatible-imagegen-codex-plugin-1.7.0.zip",
+    "openai-compatible-imagegen-shared-python-sha256-1.7.0.json",
+    "openai-compatible-imagegen-skill-1.7.0.zip",
   ]);
   assert.deepEqual((await readdir(outputDirectory)).sort(), result.files);
 });

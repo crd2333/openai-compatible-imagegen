@@ -10,6 +10,8 @@ from typing import Any
 import unicodedata
 import urllib.parse
 
+from image_size_limits import validate_model_limits
+
 
 CONTRACT = json.loads(Path(__file__).with_name("model-profile-contract.json").read_text(encoding="utf-8"))
 
@@ -24,7 +26,7 @@ def validate_image_defaults(value: Any, *, execution: bool = False) -> None:
     allowed = CONTRACT["executionDefaultKeys"] if execution else CONTRACT["imageDefaultKeys"]
     if not isinstance(value, dict) or set(value) - set(allowed):
         raise ValueError("unsupported model defaults")
-    if "size" in value and (not isinstance(value["size"], str) or not re.fullmatch(r"[0-9]+x[0-9]+", value["size"])):
+    if "size" in value and (not isinstance(value["size"], str) or not re.fullmatch(r"auto|[0-9]+x[0-9]+", value["size"])):
         raise ValueError("invalid default size")
     for key in ("quality", "output_format"):
         if key in value and (not isinstance(value[key], str) or not value[key].strip()):
@@ -104,16 +106,12 @@ def validate_model_profiles(raw: dict[str, Any]) -> None:
         capabilities = profile.get("capabilities", {})
         if not isinstance(capabilities, dict):
             raise ValueError("invalid model capabilities")
-        unknown = sorted(set(capabilities) - {"generate", "edit", "mask", "multi_reference"})
+        unknown = sorted(set(capabilities) - {"generate", "edit", "mask", "markup", "multi_reference"})
         if unknown:
             raise ValueError(f"unsupported model capability: {unknown[0]}")
         if any(type(value) is not bool for value in capabilities.values()):
             raise ValueError("invalid model capabilities")
-        limits = profile.get("limits", {})
-        if not isinstance(limits, dict) or set(limits) - {"max_input_images"}:
-            raise ValueError("invalid model limits")
-        if "max_input_images" in limits and (type(limits["max_input_images"]) is not int or limits["max_input_images"] < 1):
-            raise ValueError("invalid maximum input images")
+        validate_model_limits(profile.get("limits", {}), providers[profile["provider"]]["protocol"])
         values = profile.get("aliases", [])
         if not isinstance(values, list) or len(values) > 32:
             raise ValueError("model aliases must be a list of at most 32 names")
